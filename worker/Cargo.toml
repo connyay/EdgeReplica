@@ -13,4 +13,29 @@ crate-type = ["cdylib", "rlib"]
 path = "src/lib.rs"
 
 [dependencies]
-# Phase 4 wires worker-rs, connectrpc, tower, etc.
+edgereplica-protocol = { path = "../protocol" }
+edgereplica-shared = { path = "../shared" }
+
+worker = { version = "0.8", features = ["http", "d1"] }
+worker-macros = { version = "0.8", features = ["http"] }
+
+connectrpc = { workspace = true }
+buffa = { workspace = true }
+buffa-types = { workspace = true }
+
+http = { workspace = true }
+http-body = { workspace = true }
+http-body-util = { workspace = true }
+bytes = { workspace = true }
+
+futures = { workspace = true }
+tower = { workspace = true }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+uuid = { workspace = true }
+getrandom = { workspace = true }
+
+[dev-dependencies]
+futures = { workspace = true }

@@ -20,6 +20,7 @@ pub mod error;
 pub mod repo;
 pub mod repo_mem;
 
+pub use auth::password::AllowAllPolicy;
 pub use auth::{
     Keyring, KeyringError, MintSessionInput, MintSyncInput, PasswordError, PasswordPolicy,
     SessionContext, SyncContext, TokenError, hash_new_password, mint_session, mint_sync,
@@ -27,8 +28,8 @@ pub use auth::{
 };
 pub use clock::{Clock, SharedClock};
 pub use domain::{
-    Database, DatabaseId, Direction, Identity, IdentityId, IdentityProvider, OrgId, OrgMembership,
-    Organization, Role, TokenPurpose, User, UserId,
+    Database, DatabaseId, Direction, Identity, IdentityId, IdentityProvider, OAuthState, OrgId,
+    OrgMembership, Organization, Role, TokenPurpose, User, UserId,
 };
 pub use error::{StoreError, StoreResult};
 pub use repo::{NewOAuthUser, NewPasswordUser, Repo};

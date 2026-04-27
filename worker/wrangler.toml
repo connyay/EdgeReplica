@@ -1,0 +1,33 @@
+name = "edgereplica"
+main = "build/worker/shim.mjs"
+compatibility_date = "2026-04-22"
+
+[build]
+command = "cargo install -q \"worker-build@^0.8\" && worker-build --release --panic-unwind"
+
+# Single shared D1 binding. Schema lives under `./migrations`.
+[[d1_databases]]
+binding = "DB"
+database_name = "edgereplica"
+migrations_dir = "migrations"
+
+# Macaroon root key — base64(32 bytes). Generate with `openssl rand -base64 32`.
+# Must be set in production; `wrangler dev` falls back to a deterministic
+# dev key when the var is empty (see the Keyring::dev_default usage in lib.rs).
+[vars]
+SESSION_KEY = ""
+SESSION_TTL_SECONDS = "86400"
+SYNC_TOKEN_TTL_SECONDS = "3600"
+
+# OAuth client credentials — when both id+secret are unset for a provider,
+# StartOAuth / CompleteOAuth for that provider return Unimplemented.
+GITHUB_CLIENT_ID = ""
+GITHUB_CLIENT_SECRET = ""
+GOOGLE_CLIENT_ID = ""
+GOOGLE_CLIENT_SECRET = ""
+OAUTH_REDIRECT_BASE = ""
+
+# When "true", the worker runs the migration schema on the first request of
+# each cold isolate. Adds ~1s of cold-start latency. Prod should leave this
+# off and apply migrations via `wrangler d1 migrations apply` at deploy time.
+AUTO_MIGRATE = ""
