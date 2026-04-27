@@ -1,0 +1,130 @@
+syntax = "proto3";
+
+package edgereplica.admin.v1;
+
+// Control plane for EdgeReplica: users, orgs, databases, sync-token
+// issuance. All RPCs except Whoami / Signup / Login / OAuth start &
+// complete require a session bearer macaroon.
+service AdminService {
+  rpc Whoami(WhoamiRequest) returns (WhoamiResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+
+  rpc Signup(SignupRequest) returns (AuthResponse);
+  rpc Login(LoginRequest) returns (AuthResponse);
+
+  // Begin an OAuth flow with `provider` ("github" or "google"). Returns a
+  // redirect URL the client opens; the IdP eventually calls back to the
+  // worker's /oauth/callback HTTP route which dispatches to CompleteOAuth.
+  rpc StartOAuth(StartOAuthRequest) returns (StartOAuthResponse);
+  rpc CompleteOAuth(CompleteOAuthRequest) returns (AuthResponse);
+
+  rpc CreateDatabase(CreateDatabaseRequest) returns (Database);
+  rpc ListDatabases(ListDatabasesRequest) returns (ListDatabasesResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+  rpc DeleteDatabase(DeleteDatabaseRequest) returns (DeleteDatabaseResponse);
+
+  // Mint a short-lived sync token bound to a single database and direction.
+  rpc IssueSyncToken(IssueSyncTokenRequest) returns (IssueSyncTokenResponse);
+}
+
+// =============================================================================
+// Auth
+// =============================================================================
+
+message SignupRequest {
+  string email = 1;
+  string password = 2;
+}
+
+message LoginRequest {
+  string email = 1;
+  string password = 2;
+}
+
+message AuthResponse {
+  string session_token = 1;
+  WhoamiInfo whoami = 2;
+}
+
+message StartOAuthRequest {
+  // "github" or "google".
+  string provider = 1;
+}
+
+message StartOAuthResponse {
+  string redirect_url = 1;
+  // Opaque value the IdP echoes to /oauth/callback. Bound to provider.
+  string state = 2;
+}
+
+message CompleteOAuthRequest {
+  string state = 1;
+  // Authorization code from the IdP's redirect.
+  string code = 2;
+}
+
+message WhoamiRequest {}
+
+message WhoamiResponse {
+  WhoamiInfo whoami = 1;
+}
+
+message WhoamiInfo {
+  string user_id = 1;
+  string email = 2;
+  string org_id = 3;
+  // "admin" or "member".
+  string role = 4;
+}
+
+// =============================================================================
+// Databases
+// =============================================================================
+
+message Database {
+  string id = 1;
+  string org_id = 2;
+  string name = 3;
+  int64 created_at_unix = 4;
+}
+
+message CreateDatabaseRequest {
+  // Display name. Must be unique within the caller's org.
+  string name = 1;
+}
+
+message ListDatabasesRequest {}
+
+message ListDatabasesResponse {
+  repeated Database databases = 1;
+}
+
+message DeleteDatabaseRequest {
+  string database_id = 1;
+}
+
+message DeleteDatabaseResponse {}
+
+// =============================================================================
+// Sync tokens
+// =============================================================================
+
+enum Direction {
+  DIRECTION_UNSPECIFIED = 0;
+  DIRECTION_PUSH = 1;
+  DIRECTION_PULL = 2;
+}
+
+message IssueSyncTokenRequest {
+  string database_id = 1;
+  Direction direction = 2;
+  // Optional. Server caps at a configured max (default 1 hour).
+  int64 ttl_seconds = 3;
+}
+
+message IssueSyncTokenResponse {
+  string token = 1;
+  int64 exp_unix = 2;
+}

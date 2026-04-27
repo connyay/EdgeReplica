@@ -1,0 +1,67 @@
+[workspace]
+resolver = "2"
+members = ["protocol", "shared", "worker", "client"]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.88"
+authors = ["Connor Hindley <conn.hindley@gmail.com>"]
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+# ConnectRPC core. Default features off — `zstd` and `streaming` pull in C
+# bindings that don't build on wasm32-unknown-unknown. `gzip` is pure-Rust.
+connectrpc = { version = "0.3", default-features = false, features = ["gzip"] }
+connectrpc-build = { version = "0.3" }
+
+# Protobuf runtime used by generated code.
+buffa = { version = "0.3", features = ["json"] }
+buffa-types = { version = "0.3", features = ["json"] }
+
+# Macaroons for every auth artifact (sessions + sync tokens).
+libmacaroon = { version = "0.2", features = ["wasm"], default-features = false }
+
+# Argon2id password hashing — pure Rust, builds for wasm32.
+argon2 = { version = "0.5", default-features = false, features = ["alloc", "password-hash"] }
+password-hash = { version = "0.5", default-features = false, features = ["alloc", "rand_core"] }
+rand_core = { version = "0.6", default-features = false, features = ["getrandom"] }
+
+# UUIDs (v4 for nonces). `js` wires getrandom to crypto.getRandomValues on wasm.
+uuid = { version = "1", features = ["v4", "serde", "js"] }
+
+# Sqids for opaque external ids.
+sqids = "0.4"
+
+# HTTP types.
+http = "1"
+http-body = "1"
+http-body-util = "0.1"
+bytes = { version = "1.5", features = ["serde"] }
+
+# Async plumbing.
+futures = "0.3"
+tower = { version = "0.5", features = ["util"] }
+
+# Serde.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Misc.
+base64 = "0.22"
+sha2 = "0.10"
+hex = "0.4"
+thiserror = "1"
+getrandom = { version = "0.2", features = ["js"] }
+
+# wasm32 bidi-streaming requires the connyay fork's `spawn_local` shim
+# (tokio::spawn isn't available on wasm32). Pinned to a commit so branch-tip
+# drift can't break us; bump deliberately when picking up upstream fixes.
+[patch.crates-io]
+connectrpc = { git = "https://github.com/connyay/connect-rust", rev = "4376cd80" }
+connectrpc-build = { git = "https://github.com/connyay/connect-rust", rev = "4376cd80" }
+connectrpc-codegen = { git = "https://github.com/connyay/connect-rust", rev = "4376cd80" }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1

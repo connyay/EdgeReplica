@@ -1,0 +1,27 @@
+[package]
+name = "edgereplica-protocol"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+connectrpc = { workspace = true }
+buffa = { workspace = true }
+buffa-types = { workspace = true }
+
+# Referenced by generated trait bounds.
+bytes = { workspace = true }
+http = { workspace = true }
+http-body = { workspace = true }
+futures = { workspace = true }
+
+# Generated JSON codec uses serde derives.
+serde = { workspace = true }
+
+[build-dependencies]
+connectrpc-build = { workspace = true }

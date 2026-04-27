@@ -1,0 +1,16 @@
+[package]
+name = "edgereplica-worker"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+
+# `rlib` keeps `cargo check --workspace` (host) honest; `cdylib` is what
+# `worker-build` packages for the wasm32 target.
+[lib]
+crate-type = ["cdylib", "rlib"]
+path = "src/lib.rs"
+
+[dependencies]
+# Phase 4 wires worker-rs, connectrpc, tower, etc.
