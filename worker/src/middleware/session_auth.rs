@@ -19,6 +19,8 @@ use edgereplica_shared::{Keyring, SessionContext, SharedClock, verify_session};
 use http::header::AUTHORIZATION;
 use tower::{Layer, Service};
 
+use super::extract_bearer;
+
 #[derive(Clone)]
 pub struct SessionAuthLayer {
     keyring: Arc<Keyring>,
@@ -77,16 +79,6 @@ where
     }
 }
 
-fn extract_bearer(s: &str) -> Option<&str> {
-    let s = s.trim();
-    let prefix = "Bearer ";
-    if s.len() > prefix.len() && s[..prefix.len()].eq_ignore_ascii_case(prefix) {
-        Some(s[prefix.len()..].trim())
-    } else {
-        None
-    }
-}
-
 /// Pluck the verified `SessionContext` from `RpcContext.extensions` or
 /// fail with `Code::Unauthenticated`.
 pub fn require_session(ctx: &connectrpc::Context) -> Result<SessionContext, ConnectError> {
@@ -94,18 +86,4 @@ pub fn require_session(ctx: &connectrpc::Context) -> Result<SessionContext, Conn
         .get::<SessionContext>()
         .cloned()
         .ok_or_else(|| ConnectError::unauthenticated("session token required"))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn extracts_bearer_case_insensitively() {
-        assert_eq!(extract_bearer("Bearer abc"), Some("abc"));
-        assert_eq!(extract_bearer("bearer abc"), Some("abc"));
-        assert_eq!(extract_bearer("BEARER  abc "), Some("abc"));
-        assert!(extract_bearer("Basic abc").is_none());
-        assert!(extract_bearer("").is_none());
-    }
 }

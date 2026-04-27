@@ -11,6 +11,17 @@ binding = "DB"
 database_name = "edgereplica"
 migrations_dir = "migrations"
 
+# One DurableObject per (org_id, database_id), keyed by name. The DO hosts
+# the SyncService ConnectRPC handler directly and owns its SqlStorage.
+[durable_objects]
+bindings = [
+    { name = "EDGE_REPLICA", class_name = "EdgeReplica" },
+]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["EdgeReplica"]
+
 # Macaroon root key — base64(32 bytes). Generate with `openssl rand -base64 32`.
 # Must be set in production; `wrangler dev` falls back to a deterministic
 # dev key when the var is empty (see the Keyring::dev_default usage in lib.rs).

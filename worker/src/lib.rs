@@ -15,6 +15,8 @@ use tower::{Layer, Service};
 use worker::{Context, Env, HttpRequest, event};
 
 pub mod clock_worker;
+pub mod do_edge_replica;
+pub mod do_migrations;
 pub mod middleware;
 pub mod repo_d1;
 pub mod routes;
@@ -105,7 +107,7 @@ fn auto_migrate(env: &Env) -> bool {
 }
 
 #[cfg(target_arch = "wasm32")]
-fn load_keyring(env: &Env) -> Keyring {
+pub(crate) fn load_keyring(env: &Env) -> Keyring {
     let raw = env
         .var("SESSION_KEY")
         .ok()
