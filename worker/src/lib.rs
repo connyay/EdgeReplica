@@ -10,22 +10,29 @@ use std::sync::LazyLock;
 
 use connectrpc::{ConnectRpcBody, ConnectRpcService, Router as RpcRouter};
 use edgereplica_protocol::admin::v1::AdminServiceExt;
-use edgereplica_shared::{Keyring, SharedClock};
 use http_body_util::Either;
 use tower::{Layer, Service};
 use worker::{Context, Env, HttpRequest, event};
 
-pub mod clock_worker;
+pub mod auth;
+pub mod clock;
 pub mod do_edge_replica;
 pub mod do_migrations;
 #[cfg(target_arch = "wasm32")]
 pub mod do_sync_ws;
+pub mod domain;
+pub mod error;
 pub mod middleware;
+pub mod repo;
 pub mod repo_d1;
+pub mod repo_mem;
 pub mod routes;
 pub mod services;
 pub mod state;
 pub mod sync_forward;
+
+use crate::auth::Keyring;
+use crate::clock::SharedClock;
 
 use crate::middleware::{RequestIdLayer, SessionAuthLayer};
 use crate::services::AdminServer;
@@ -89,7 +96,7 @@ async fn build_state(env: &Env) -> worker::Result<SharedState<repo_d1::D1Repo>> 
     }
 
     let keyring = Arc::new(load_keyring(env));
-    let clock: SharedClock = Arc::new(clock_worker::WorkerDateClock::new());
+    let clock: SharedClock = Arc::new(crate::clock::WorkerDateClock::new());
     let config = load_config(env);
 
     Ok(Arc::new(AppState {
@@ -103,11 +110,11 @@ async fn build_state(env: &Env) -> worker::Result<SharedState<repo_d1::D1Repo>> 
 // =================== build_state — native (host check + tests) ===================
 
 #[cfg(not(target_arch = "wasm32"))]
-async fn build_state(_env: &Env) -> worker::Result<SharedState<edgereplica_shared::InMemoryRepo>> {
+async fn build_state(_env: &Env) -> worker::Result<SharedState<crate::repo_mem::InMemoryRepo>> {
     let keyring = Arc::new(Keyring::dev_default());
-    let clock: SharedClock = Arc::new(edgereplica_shared::clock::SystemClock::new());
+    let clock: SharedClock = Arc::new(crate::clock::SystemClock::new());
     Ok(Arc::new(AppState {
-        repo: edgereplica_shared::InMemoryRepo::new(),
+        repo: crate::repo_mem::InMemoryRepo::new(),
         keyring,
         clock,
         config: Config::default(),

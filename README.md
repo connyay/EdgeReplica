@@ -1,30 +1,36 @@
 # EdgeReplica
 
 Per-page SQLite sync between a CLI client and a Cloudflare Worker +
-DurableObject backend, transported over ConnectRPC bidi-streaming and
-authenticated with macaroons.
+DurableObject backend. Admin RPC over ConnectRPC, sync over a
+WebSocket + MessagePack frame protocol, authenticated with macaroons.
 
 ## Workspace layout
 
 ```
-proto/      .proto sources (Admin + Sync services)
-protocol/   generated Rust types (buffa + connectrpc-build)
-shared/     domain types, Repo trait, in-mem repo, macaroon helpers
-worker/     Cloudflare Worker (cdylib) — AdminService + EdgeReplica DO
+proto/      .proto sources (Admin service)
+protocol/   wire formats — admin RPC (codegen) + sync WebSocket frames
+worker/     Cloudflare Worker (cdylib + rlib): handlers, DO, middleware,
+            auth, domain, repo, clock
 client/     native CLI (`edgereplica`)
+bench/      hash-algorithm benchmarks (host + wasm)
 ```
 
 ## Architecture
 
 - **AdminService** runs in the Worker (talks D1): signup, login, OAuth,
-  whoami, database CRUD, sync-token issuance.
-- **SyncService** runs **inside the EdgeReplica DurableObject** so the
-  bidi FSM lives next to the `SqlStorage` it reads/writes. The Worker
+  whoami, database CRUD, sync-token issuance. ConnectRPC, codegen lives
+  in `protocol::admin`.
+- **Sync** is a WebSocket carrying MessagePack-encoded `SyncMessage`
+  frames (one-byte protocol version + body). The wire format lives in
+  `protocol::sync`; both server and client decode against the same
+  types. The handler runs **inside the EdgeReplica DurableObject** so
+  the FSM lives next to the `SqlStorage` it reads/writes. The Worker
   is a thin auth/routing edge: it verifies the sync macaroon, looks up
-  the per-`database_id` DO, and forwards the bidi body via `stub.fetch`.
-- **Tower middleware** (`RequestIdLayer`, `SessionAuthLayer`,
-  `DoSyncAuthLayer`) wraps both stacks. Auth layers are decoders, not
-  gates — handlers call `require_session(ctx)?` themselves.
+  the per-`database_id` DO, and forwards the upgrade via `stub.fetch`.
+- **Tower middleware** (`RequestIdLayer`, `SessionAuthLayer`) wraps the
+  admin stack. Auth layers are decoders, not gates — handlers call
+  `require_session(ctx)?` themselves. Sync auth is verified twice (at
+  the worker edge and again inside the DO) as defense in depth.
 - **Macaroons** carry `purpose`, `user`, `org`, `exp`, plus
   session-specific (`email`, `role`) or sync-specific (`database`,
   `direction`) caveats. Verification is pure (no DB read).
@@ -111,11 +117,12 @@ warning + uses a deterministic dev key (`Keyring::dev_default`).
 ## Testing
 
 ```bash
-cargo test --workspace                              # 21 worker + 20 shared = 41 tests
+cargo test --workspace                              # 45 worker + 10 protocol = 55 tests
 cargo check -p edgereplica-worker --target wasm32-unknown-unknown
 cargo clippy --workspace --all-targets
 ```
 
-Worker tests run the AdminService and SyncService FSM against an
-in-memory `Repo` and `SyncStorage`. The DO bidi handler is the same
-code on host and wasm — only the `SyncStorage` impl differs.
+Worker tests run the AdminService and the sync FSM against an in-memory
+`Repo` and `SyncStorage`. The FSM is the same code on host and wasm —
+only the `SyncStorage` impl differs. Sync wire format roundtrips live
+in `protocol::sync::tests`.

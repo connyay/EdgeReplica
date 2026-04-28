@@ -11,9 +11,9 @@
 //! the on-the-wire `SyncMessage` shape; no per-comparison hex encode.
 
 use bytes::Bytes;
-use edgereplica_shared::StoreResult;
 
-pub use edgereplica_shared::page_hash;
+use crate::error::StoreResult;
+pub use edgereplica_protocol::sync::page_hash;
 
 /// Subset of `SqlStorage` that the FSM relies on. Kept deliberately
 /// minimal so `InMemorySyncStorage` (used only by tests) is trivial.
@@ -147,9 +147,10 @@ pub use sql_storage::SqlSyncStorage;
 #[cfg(target_arch = "wasm32")]
 mod sql_storage {
     use bytes::Bytes;
-    use edgereplica_shared::{StoreError, StoreResult};
     use serde::Deserialize;
     use worker::SqlStorage;
+
+    use crate::error::{StoreError, StoreResult};
 
     use super::SyncStorage;
 

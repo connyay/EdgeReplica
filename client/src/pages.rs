@@ -9,7 +9,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
-use edgereplica_shared::page_hash;
+use edgereplica_protocol::sync::page_hash;
 use rusqlite::{Connection, OpenFlags};
 
 pub struct PageReader {

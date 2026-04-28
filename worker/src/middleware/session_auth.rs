@@ -14,8 +14,9 @@
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
+use crate::auth::{Keyring, SessionContext, verify_session};
+use crate::clock::SharedClock;
 use connectrpc::ConnectError;
-use edgereplica_shared::{Keyring, SessionContext, SharedClock, verify_session};
 use http::header::AUTHORIZATION;
 use tower::{Layer, Service};
 

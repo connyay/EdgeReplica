@@ -10,7 +10,8 @@
 
 use std::sync::Arc;
 
-use edgereplica_shared::{Keyring, SharedClock, SyncContext, verify_sync};
+use crate::auth::{Keyring, SyncContext, verify_sync};
+use crate::clock::SharedClock;
 use http::{HeaderValue, Response, StatusCode, header::AUTHORIZATION};
 use worker::{Body, Env, HttpRequest, Result, request_to_wasm, response_from_wasm};
 

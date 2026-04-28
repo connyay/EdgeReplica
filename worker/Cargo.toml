@@ -14,7 +14,6 @@ path = "src/lib.rs"
 
 [dependencies]
 edgereplica-protocol = { path = "../protocol" }
-edgereplica-shared = { path = "../shared" }
 
 worker = { version = "0.8", features = ["http", "d1"] }
 worker-macros = { version = "0.8", features = ["http"] }
@@ -39,6 +38,16 @@ getrandom = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
 blake3 = { workspace = true }
+thiserror = { workspace = true }
+
+# Macaroons + key encoding for session/sync tokens.
+libmacaroon = { workspace = true }
+base64 = { workspace = true }
+
+# Argon2id password hashing.
+argon2 = { workspace = true }
+password-hash = { workspace = true }
+rand_core = { workspace = true }
 
 [dev-dependencies]
 futures = { workspace = true }

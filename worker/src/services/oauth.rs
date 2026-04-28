@@ -14,8 +14,8 @@
 
 #![cfg(target_arch = "wasm32")]
 
+use crate::domain::IdentityProvider;
 use connectrpc::ConnectError;
-use edgereplica_shared::IdentityProvider;
 use serde::Deserialize;
 use worker::send::SendFuture;
 use worker::wasm_bindgen::JsValue;

@@ -23,5 +23,11 @@ futures = { workspace = true }
 # Generated JSON codec uses serde derives.
 serde = { workspace = true }
 
+# Sync wire format. `rmp-serde` is pure Rust and builds for wasm32; `blake3`
+# (workspace pin: `default-features = false`, no rayon) is wasm-safe.
+rmp-serde = "1"
+blake3 = { workspace = true }
+thiserror = { workspace = true }
+
 [build-dependencies]
 connectrpc-build = { workspace = true }

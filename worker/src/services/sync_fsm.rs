@@ -15,7 +15,11 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use edgereplica_shared::{Direction, SYNC_PROTOCOL_VERSION, SharedClock, StoreError, SyncMessage};
+use edgereplica_protocol::sync::{PROTOCOL_VERSION as SYNC_PROTOCOL_VERSION, SyncMessage};
+
+use crate::clock::SharedClock;
+use crate::domain::Direction;
+use crate::error::StoreError;
 
 use crate::services::sync_storage::{SyncStorage, page_hash};
 
@@ -288,7 +292,10 @@ mod tests {
     use std::sync::Arc;
 
     use bytes::Bytes;
-    use edgereplica_shared::{Direction, SharedClock, SyncMessage, clock::FixedClock};
+    use edgereplica_protocol::sync::SyncMessage;
+
+    use crate::clock::{FixedClock, SharedClock};
+    use crate::domain::Direction;
 
     use crate::services::sync_storage::{InMemorySyncStorage, SyncStorage, page_hash};
 

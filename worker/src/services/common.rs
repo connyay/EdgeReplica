@@ -1,10 +1,13 @@
 //! Helpers shared across handlers: error mapping, simple validation.
 
 use connectrpc::ConnectError;
-use edgereplica_shared::{PasswordError, StoreError, TokenError};
 
-/// Map a `StoreError` (defined in the host-portable `shared` crate, no
-/// connectrpc dep) onto the right gRPC code. Use as `.map_err(map_store_error)?`.
+use crate::auth::{PasswordError, TokenError};
+use crate::error::StoreError;
+
+/// Map a `StoreError` onto the right gRPC code. `StoreError` deliberately
+/// has no connectrpc dep so the storage layer stays transport-agnostic;
+/// translation happens here. Use as `.map_err(map_store_error)?`.
 pub fn map_store_error(e: StoreError) -> ConnectError {
     match e {
         StoreError::NotFound(s) => ConnectError::not_found(s),

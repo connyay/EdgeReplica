@@ -11,9 +11,10 @@
 
 use std::sync::Arc;
 
-use edgereplica_shared::{
-    Keyring, SharedClock, SyncMessage, decode_frame, encode_frame, verify_sync,
-};
+use edgereplica_protocol::sync::{SyncMessage, decode_frame, encode_frame};
+
+use crate::auth::{Keyring, SyncContext, verify_sync};
+use crate::clock::SharedClock;
 use futures::StreamExt as _;
 use worker::{
     Headers, Request, Response, ResponseBuilder, Result, SqlStorage, WebSocket, WebSocketPair,
@@ -139,7 +140,7 @@ fn verify_token(
     headers: &Headers,
     keyring: &Keyring,
     clock: &SharedClock,
-) -> std::result::Result<edgereplica_shared::SyncContext, u16> {
+) -> std::result::Result<SyncContext, u16> {
     let raw = headers
         .get("Authorization")
         .map_err(|_| 400u16)?

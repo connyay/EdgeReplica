@@ -3,7 +3,7 @@
 //! Wasm-only: the JsFuture each D1 call returns is `!Send` outside wasm,
 //! so the futures returned here can't satisfy the `+ Send` bound on
 //! `Repo`'s method futures. Native unit tests use `InMemoryRepo` from
-//! `edgereplica-shared`.
+//! [`crate::repo_mem`].
 //!
 //! Multi-row state changes (signup) go through `D1Database::batch`, which
 //! Cloudflare guarantees as atomic (all-or-nothing). Single-row changes
@@ -13,13 +13,12 @@
 
 use serde::Deserialize;
 
-use edgereplica_shared::{
-    Database, DatabaseId, Identity, IdentityId, IdentityProvider, NewOAuthUser, NewPasswordUser,
-    OAuthState, OrgId, OrgMembership, Organization, Repo, Role, StoreError, StoreResult, User,
-    UserId,
-    domain::entities::personal_org_name,
-    repo::{OrgMemberRow, OrgWithRole},
+use crate::domain::{
+    Database, DatabaseId, Identity, IdentityId, IdentityProvider, OAuthState, OrgId, OrgMembership,
+    Organization, Role, User, UserId, entities::personal_org_name,
 };
+use crate::error::{StoreError, StoreResult};
+use crate::repo::{NewOAuthUser, NewPasswordUser, OrgMemberRow, OrgWithRole, Repo};
 use worker::send::IntoSendFuture;
 use worker::{D1Database, D1PreparedStatement, D1Type};
 

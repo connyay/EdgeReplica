@@ -15,14 +15,14 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use edgereplica_shared::{Keyring, SharedClock};
 // `worker::wasm_bindgen` re-exports the `wasm-bindgen` crate's macro under
 // the `wasm_bindgen` name, which the `#[durable_object]` macro expansion
 // invokes unqualified. Bringing it into scope makes that resolve.
 use worker::wasm_bindgen;
 use worker::{DurableObject, Env, Request, Response, Result, SqlStorage, State, durable_object};
 
-use crate::clock_worker::WorkerDateClock;
+use crate::auth::Keyring;
+use crate::clock::{SharedClock, WorkerDateClock};
 use crate::do_migrations;
 use crate::do_sync_ws;
 use crate::load_keyring;

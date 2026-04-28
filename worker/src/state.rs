@@ -3,7 +3,9 @@
 
 use std::sync::Arc;
 
-use edgereplica_shared::{Keyring, Repo, SharedClock};
+use crate::auth::Keyring;
+use crate::clock::SharedClock;
+use crate::repo::Repo;
 
 /// Tunables sourced from environment vars (or defaults).
 #[derive(Clone, Debug)]

@@ -1,7 +1,7 @@
 //! WebSocket sync client. Drives push and pull against the worker's
 //! `/sync` endpoint. Frames are MessagePack-encoded `SyncMessage`s
 //! prefixed with a one-byte protocol version (see
-//! [`edgereplica_shared::sync_protocol`]).
+//! [`edgereplica_protocol::sync`]).
 //!
 //! Auth: the macaroon goes on the upgrade request as
 //! `Authorization: Bearer <token>`. The worker rejects bad tokens with
@@ -13,7 +13,9 @@ use std::path::PathBuf;
 use anyhow::{Context, Result, anyhow, bail};
 use bytes::Bytes;
 use clap::Args;
-use edgereplica_shared::{SYNC_PROTOCOL_VERSION, SyncMessage, decode_frame, encode_frame};
+use edgereplica_protocol::sync::{
+    PROTOCOL_VERSION as SYNC_PROTOCOL_VERSION, SyncMessage, decode_frame, encode_frame,
+};
 use futures::{SinkExt, StreamExt};
 use http::HeaderValue;
 use tokio_tungstenite::{

@@ -6,12 +6,18 @@
 use buffa::view::OwnedView;
 use connectrpc::{ConnectError, Context as RpcContext};
 use edgereplica_protocol::admin::v1 as pb;
-use edgereplica_shared::{
-    AllowAllPolicy, IdentityProvider, MintSessionInput, MintSyncInput, NewPasswordUser,
-    PasswordPolicy, Repo, Role, hash_new_password, mint_session, mint_sync, verify_password,
+
+use crate::auth::password::AllowAllPolicy;
+use crate::auth::{
+    MintSessionInput, MintSyncInput, PasswordPolicy, hash_new_password, mint_session, mint_sync,
+    verify_password,
 };
 #[cfg(target_arch = "wasm32")]
-use edgereplica_shared::{NewOAuthUser, OAuthState};
+use crate::domain::OAuthState;
+use crate::domain::{Database, DatabaseId, Direction, IdentityProvider, Organization, Role, User};
+#[cfg(target_arch = "wasm32")]
+use crate::repo::NewOAuthUser;
+use crate::repo::{NewPasswordUser, Repo};
 
 use crate::middleware::require_session;
 use crate::services::common::{
@@ -45,8 +51,8 @@ impl<R: Repo, P: PasswordPolicy> AdminServer<R, P> {
     /// `signup`, `login`, and (phase 8) the OAuth completion handler.
     async fn issue_session_for(
         &self,
-        user: &edgereplica_shared::User,
-    ) -> Result<(String, edgereplica_shared::Organization, Role), ConnectError> {
+        user: &User,
+    ) -> Result<(String, Organization, Role), ConnectError> {
         let orgs = self
             .state
             .repo
@@ -74,11 +80,7 @@ impl<R: Repo, P: PasswordPolicy> AdminServer<R, P> {
     }
 }
 
-fn whoami_pb(
-    user: &edgereplica_shared::User,
-    org: &edgereplica_shared::Organization,
-    role: Role,
-) -> pb::WhoamiInfo {
+fn whoami_pb(user: &User, org: &Organization, role: Role) -> pb::WhoamiInfo {
     pb::WhoamiInfo {
         user_id: user.id.to_string(),
         email: user.email.clone(),
@@ -88,7 +90,7 @@ fn whoami_pb(
     }
 }
 
-fn database_pb(db: &edgereplica_shared::Database) -> pb::Database {
+fn database_pb(db: &Database) -> pb::Database {
     pb::Database {
         id: db.id.to_string(),
         org_id: db.org_id.to_string(),
@@ -277,7 +279,7 @@ impl<R: Repo, P: PasswordPolicy> pb::AdminService for AdminServer<R, P> {
                 "admin role required to delete a database",
             ));
         }
-        let id = edgereplica_shared::DatabaseId::from(request.database_id);
+        let id = DatabaseId::from(request.database_id);
         let db = self
             .state
             .repo
@@ -304,7 +306,7 @@ impl<R: Repo, P: PasswordPolicy> pb::AdminService for AdminServer<R, P> {
         request: OwnedView<pb::IssueSyncTokenRequestView<'static>>,
     ) -> Result<(pb::IssueSyncTokenResponse, RpcContext), ConnectError> {
         let session = require_session(&ctx)?;
-        let id = edgereplica_shared::DatabaseId::from(request.database_id);
+        let id = DatabaseId::from(request.database_id);
         let db = self
             .state
             .repo
@@ -319,8 +321,8 @@ impl<R: Repo, P: PasswordPolicy> pb::AdminService for AdminServer<R, P> {
         }
 
         let direction = match request.direction.as_known() {
-            Some(pb::Direction::DIRECTION_PUSH) => edgereplica_shared::Direction::Push,
-            Some(pb::Direction::DIRECTION_PULL) => edgereplica_shared::Direction::Pull,
+            Some(pb::Direction::DIRECTION_PUSH) => Direction::Push,
+            Some(pb::Direction::DIRECTION_PULL) => Direction::Pull,
             _ => {
                 return Err(ConnectError::invalid_argument(
                     "direction must be DIRECTION_PUSH or DIRECTION_PULL",
@@ -536,13 +538,13 @@ mod tests {
     //! handler code that runs against D1 under wasm.
 
     use super::*;
+    use crate::auth::{Keyring, SessionContext, verify_session, verify_sync};
+    use crate::clock::{SharedClock, SystemClock};
+    use crate::repo_mem::InMemoryRepo;
     use buffa::MessageView;
     use buffa::view::OwnedView;
     use connectrpc::Context as RpcContext;
     use edgereplica_protocol::admin::v1::AdminService;
-    use edgereplica_shared::{
-        InMemoryRepo, Keyring, SessionContext, SharedClock, clock::SystemClock, verify_session,
-    };
     use futures::executor::block_on;
     use std::sync::Arc;
 
@@ -723,16 +725,12 @@ mod tests {
             block_on(server.issue_sync_token(ctx_with(session.clone()), view(&req))).unwrap();
         assert!(!resp.token.is_empty());
 
-        let verified = edgereplica_shared::verify_sync(
-            &state.keyring,
-            state.clock.now_unix_seconds(),
-            &resp.token,
-        )
-        .unwrap();
+        let verified =
+            verify_sync(&state.keyring, state.clock.now_unix_seconds(), &resp.token).unwrap();
         assert_eq!(verified.user, session.user);
         assert_eq!(verified.org, session.org);
         assert_eq!(verified.database.to_string(), db.id);
-        assert_eq!(verified.direction, edgereplica_shared::Direction::Push);
+        assert_eq!(verified.direction, Direction::Push);
     }
 
     #[test]

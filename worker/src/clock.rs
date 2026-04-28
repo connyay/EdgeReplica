@@ -1,6 +1,6 @@
 //! Wall-clock helpers. Trait-based so tests can inject a fixed clock and so
-//! the wasm32 worker can plug in a `worker::Date`-backed impl without
-//! pulling worker-rs into this crate.
+//! the wasm32 worker can plug in a `worker::Date`-backed impl alongside the
+//! host `SystemClock` without target-specific imports leaking into callers.
 
 use std::sync::Arc;
 
@@ -15,8 +15,9 @@ pub trait Clock: Send + Sync + 'static {
 
 pub type SharedClock = Arc<dyn Clock>;
 
-/// Host-only clock backed by `std::time::SystemTime`. The worker crate
-/// supplies its own wasm32 clock via `worker::Date`.
+/// Host-only clock backed by `std::time::SystemTime`.
+/// `SystemTime::now()` panics on `wasm32-unknown-unknown`, so the worker
+/// uses [`WorkerDateClock`] instead at that target.
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Default)]
 pub struct SystemClock;
@@ -39,8 +40,27 @@ impl Clock for SystemClock {
     }
 }
 
+/// `worker::Date`-backed clock for the wasm32 worker isolate.
+#[cfg(target_arch = "wasm32")]
+#[derive(Default)]
+pub struct WorkerDateClock;
+
+#[cfg(target_arch = "wasm32")]
+impl WorkerDateClock {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl Clock for WorkerDateClock {
+    fn now_ms(&self) -> i64 {
+        worker::Date::now().as_millis() as i64
+    }
+}
+
 /// Mockable clock for tests. Available outside `cfg(test)` so dependent
-/// crates can use it in their own test modules.
+/// modules can use it in their own test modules.
 pub struct FixedClock {
     pub at_ms: std::sync::atomic::AtomicI64,
 }

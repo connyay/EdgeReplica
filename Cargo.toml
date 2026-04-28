@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["protocol", "shared", "worker", "client", "bench", "bench/wasm-bench"]
+members = ["protocol", "worker", "client", "bench", "bench/wasm-bench"]
 
 [workspace.package]
 edition = "2024"
