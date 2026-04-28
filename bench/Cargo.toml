@@ -1,0 +1,29 @@
+[package]
+name = "edgereplica-bench"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+# RustCrypto family — same Digest trait as the sha2 crate already in the workspace.
+sha2 = { workspace = true, features = ["asm"] }
+blake2 = "0.10"
+
+# BLAKE3 has its own (faster) API.
+blake3 = "1"
+
+# Filling pages with non-zero random bytes so we don't accidentally
+# benchmark a hash function's fast path for zero blocks.
+rand = "0.8"
+
+[[bench]]
+name = "page_hash"
+harness = false

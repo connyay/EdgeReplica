@@ -1,0 +1,28 @@
+[package]
+name = "edgereplica-wasm-bench"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wasm-bindgen = "0.2"
+
+# Pure-Rust hashes (no asm/SIMD intrinsics needed) — same crates as the
+# native bench, but here `sha2` is built without `asm` since wasm32-unknown
+# can't use it.
+sha2 = "0.10"
+blake2 = "0.10"
+blake3 = { version = "1", default-features = false }
+
+[profile.release]
+# Match the worker's release profile — same codegen settings the production
+# wasm gets, so the numbers are representative.
+opt-level = 3
+lto = true
+codegen-units = 1
