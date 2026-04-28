@@ -121,6 +121,7 @@ pub use sql_storage::SqlSyncStorage;
 
 #[cfg(target_arch = "wasm32")]
 mod sql_storage {
+    use bytes::Bytes;
     use edgereplica_shared::{StoreError, StoreResult};
     use serde::Deserialize;
     use worker::SqlStorage;
@@ -149,9 +150,16 @@ mod sql_storage {
         hash: String,
     }
 
+    /// `data` is decoded via `bytes::Bytes` rather than `Vec<u8>`.
+    /// `serde-wasm-bindgen` round-trips a SQLite `BLOB` as a JS byte buffer
+    /// (calling `serialize_bytes`); `Vec<u8>`'s default `Deserialize` only
+    /// implements `visit_seq` and rejects that type with the surprising
+    /// `invalid type: byte array, expected a sequence` error. `bytes::Bytes`
+    /// (with the `serde` feature) implements `visit_byte_buf` and accepts
+    /// the JS shape directly.
     #[derive(Deserialize)]
     struct DataRow {
-        data: Vec<u8>,
+        data: Bytes,
     }
 
     #[derive(Deserialize)]
@@ -187,7 +195,7 @@ mod sql_storage {
                 .map_err(|e| err("get_page", e))?;
             let mut iter = cursor.next::<DataRow>();
             match iter.next() {
-                Some(Ok(row)) => Ok(Some(row.data)),
+                Some(Ok(row)) => Ok(Some(row.data.to_vec())),
                 Some(Err(e)) => Err(StoreError::backend(format!("decode data: {e}"))),
                 None => Ok(None),
             }
