@@ -11,4 +11,38 @@ name = "edgereplica"
 path = "src/main.rs"
 
 [dependencies]
-# Phase 7 wires clap, reqwest, rusqlite, connectrpc native.
+edgereplica-protocol = { path = "../protocol" }
+# `client` brings in hyper-util's pool + http1/http2; `client-tls` adds
+# rustls so we can talk https:// to a deployed worker.
+connectrpc = { version = "0.3", default-features = false, features = [
+    "gzip",
+    "client",
+    "client-tls",
+] }
+buffa = { workspace = true }
+
+http = { workspace = true }
+http-body = { workspace = true }
+bytes = { workspace = true }
+
+futures = { workspace = true }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "fs"] }
+
+clap = { version = "4.5", features = ["derive"] }
+anyhow = "1"
+thiserror = { workspace = true }
+
+# SQLite page reader. `bundled` ships the SQLite source so users don't
+# need a system libsqlite; `vtab` enables the `sqlite_dbpage` virtual
+# table.
+rusqlite = { version = "0.34", features = ["bundled", "vtab", "modern_sqlite"] }
+
+sha2 = { workspace = true }
+hex = { workspace = true }
+
+dirs = "5"
+toml = "0.8"
+serde = { workspace = true }
+
+rustls = "0.23"
+rustls-native-certs = "0.8"
