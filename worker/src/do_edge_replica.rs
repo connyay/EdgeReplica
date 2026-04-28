@@ -13,6 +13,7 @@
 #![cfg(target_arch = "wasm32")]
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use connectrpc::{ConnectRpcService, Router as RpcRouter};
 use edgereplica_protocol::sync::v1::SyncServiceExt;
@@ -41,6 +42,12 @@ pub struct EdgeReplica {
     auth: DoSyncAuthLayer,
     request_id: RequestIdLayer,
     service: ConnectRpcService<RpcRouter>,
+    /// Per-DO migration latch. Must be on the struct (not a `static`)
+    /// because a single wasm isolate hosts many DO instances and each
+    /// has its own SQLite database. A `static` would let the first DO
+    /// to migrate trick every other DO in the isolate into skipping
+    /// its own migration, leaving them with no `pages` table.
+    schema_ready: AtomicBool,
 }
 
 impl DurableObject for EdgeReplica {
@@ -60,11 +67,12 @@ impl DurableObject for EdgeReplica {
             auth,
             request_id,
             service,
+            schema_ready: AtomicBool::new(false),
         }
     }
 
     async fn fetch(&self, req: Request) -> Result<Response> {
-        ensure_schema_once(&self.sql, self.clock.now_ms())?;
+        self.ensure_schema()?;
 
         let web_req: web_sys::Request = (&req).try_into()?;
         let http_req = request_from_wasm(web_req)
@@ -82,14 +90,14 @@ impl DurableObject for EdgeReplica {
     }
 }
 
-fn ensure_schema_once(sql: &SqlStorage, now_ms: i64) -> Result<()> {
-    use std::sync::atomic::{AtomicBool, Ordering};
-    static READY: AtomicBool = AtomicBool::new(false);
-    if READY.load(Ordering::Relaxed) {
-        return Ok(());
+impl EdgeReplica {
+    fn ensure_schema(&self) -> Result<()> {
+        if self.schema_ready.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+        do_migrations::ensure_schema(&self.sql, self.clock.now_ms())
+            .map_err(|e| worker::Error::RustError(format!("schema: {e}")))?;
+        self.schema_ready.store(true, Ordering::Relaxed);
+        Ok(())
     }
-    do_migrations::ensure_schema(sql, now_ms)
-        .map_err(|e| worker::Error::RustError(format!("schema: {e}")))?;
-    READY.store(true, Ordering::Relaxed);
-    Ok(())
 }
