@@ -36,6 +36,9 @@ serde_json = { workspace = true }
 
 uuid = { workspace = true }
 getrandom = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
 
 [dev-dependencies]
 futures = { workspace = true }
+tokio = { version = "1", features = ["macros", "rt"] }

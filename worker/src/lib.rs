@@ -11,6 +11,7 @@ use std::sync::LazyLock;
 use connectrpc::{ConnectRpcBody, ConnectRpcService, Router as RpcRouter};
 use edgereplica_protocol::admin::v1::AdminServiceExt;
 use edgereplica_shared::{Keyring, SharedClock};
+use http_body_util::Either;
 use tower::{Layer, Service};
 use worker::{Context, Env, HttpRequest, event};
 
@@ -22,19 +23,32 @@ pub mod repo_d1;
 pub mod routes;
 pub mod services;
 pub mod state;
+pub mod sync_forward;
 
 use crate::middleware::{RequestIdLayer, SessionAuthLayer};
 use crate::services::AdminServer;
 use crate::state::{AppState, Config, SharedState};
+
+/// Unified body type: ConnectRpcBody for handlers we run locally
+/// (AdminService, static routes); `worker::Body` for responses streamed
+/// back from the EdgeReplica DurableObject when forwarding sync calls.
+type AppBody = Either<ConnectRpcBody, worker::Body>;
 
 #[event(fetch, respond_with_errors)]
 async fn fetch(
     req: HttpRequest,
     env: Env,
     _ctx: Context,
-) -> worker::Result<http::Response<ConnectRpcBody>> {
+) -> worker::Result<http::Response<AppBody>> {
     if let Some(resp) = routes::try_handle(&req) {
-        return Ok(resp);
+        return Ok(resp.map(Either::Left));
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    if req.uri().path().starts_with(sync_forward::SYNC_PATH_PREFIX) {
+        let state = build_state(&env).await?;
+        let resp = sync_forward::forward(req, &env, &state.keyring, &state.clock).await?;
+        return Ok(resp.map(Either::Right));
     }
 
     // Hoist the layer out of the per-request path so its monotonic counter
@@ -52,7 +66,7 @@ async fn fetch(
         .call(req)
         .await
         .expect("ConnectRpcService is infallible by design");
-    Ok(response)
+    Ok(response.map(Either::Left))
 }
 
 // =================== build_state — wasm path ===================

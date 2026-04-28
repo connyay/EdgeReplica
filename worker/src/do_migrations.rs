@@ -25,10 +25,6 @@ pub const MIGRATIONS: &[Migration] = &[Migration {
             version INTEGER PRIMARY KEY,
             applied_at_ms INTEGER NOT NULL
         );
-        CREATE TABLE IF NOT EXISTS metadata (
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL
-        );
         CREATE TABLE IF NOT EXISTS pages (
             page_no INTEGER PRIMARY KEY,
             data BLOB NOT NULL,

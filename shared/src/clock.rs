@@ -39,14 +39,12 @@ impl Clock for SystemClock {
     }
 }
 
-/// Mockable clock for tests. Behind `cfg(test)` so it doesn't leak into
-/// the public API.
-#[cfg(test)]
+/// Mockable clock for tests. Available outside `cfg(test)` so dependent
+/// crates can use it in their own test modules.
 pub struct FixedClock {
     pub at_ms: std::sync::atomic::AtomicI64,
 }
 
-#[cfg(test)]
 impl FixedClock {
     pub fn new(now_ms: i64) -> Arc<Self> {
         Arc::new(Self {
@@ -60,7 +58,6 @@ impl FixedClock {
     }
 }
 
-#[cfg(test)]
 impl Clock for FixedClock {
     fn now_ms(&self) -> i64 {
         self.at_ms.load(std::sync::atomic::Ordering::Relaxed)

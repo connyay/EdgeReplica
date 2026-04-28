@@ -32,6 +32,7 @@ use crate::do_migrations;
 use crate::load_keyring;
 use crate::middleware::{DoSyncAuthLayer, RequestIdLayer};
 use crate::services::SyncServer;
+use crate::services::sync_storage::SqlSyncStorage;
 
 #[durable_object]
 pub struct EdgeReplica {
@@ -47,7 +48,9 @@ impl DurableObject for EdgeReplica {
         let sql = state.storage().sql();
         let keyring = Arc::new(load_keyring(&env));
         let clock: SharedClock = Arc::new(WorkerDateClock::new());
-        let router = Arc::new(SyncServer::new()).register(RpcRouter::new());
+        let storage = Arc::new(SqlSyncStorage::new(sql.clone()));
+        let server = Arc::new(SyncServer::new(storage, Arc::clone(&clock)));
+        let router = server.register(RpcRouter::new());
         let service = ConnectRpcService::new(router);
         let auth = DoSyncAuthLayer::new(Arc::clone(&keyring), Arc::clone(&clock));
         let request_id = RequestIdLayer::new();
