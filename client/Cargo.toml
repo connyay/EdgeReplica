@@ -37,12 +37,17 @@ thiserror = { workspace = true }
 # table.
 rusqlite = { version = "0.34", features = ["bundled", "vtab", "modern_sqlite"] }
 
-sha2 = { workspace = true }
-hex = { workspace = true }
-
 dirs = "5"
 toml = "0.8"
 serde = { workspace = true }
 
 rustls = "0.23"
 rustls-native-certs = "0.8"
+
+# WebSocket client for sync. `rustls-tls-native-roots` reuses the system
+# trust roots so we don't need to maintain a separate CA bundle.
+tokio-tungstenite = { version = "0.24", default-features = false, features = [
+    "connect",
+    "rustls-tls-native-roots",
+] }
+edgereplica-shared = { path = "../shared" }

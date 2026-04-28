@@ -27,6 +27,11 @@ serde_json = { workspace = true }
 futures = { workspace = true }
 thiserror = { workspace = true }
 
+# Sync wire format. `rmp-serde` is pure Rust and builds for wasm32.
+rmp-serde = "1"
+bytes = { workspace = true }
+blake3 = { workspace = true }
+
 # `getrandom/js` for the wasm32 OS RNG path used by uuid + password salt.
 getrandom = { workspace = true }
 

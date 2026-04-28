@@ -19,6 +19,7 @@ pub mod domain;
 pub mod error;
 pub mod repo;
 pub mod repo_mem;
+pub mod sync_protocol;
 
 pub use auth::password::AllowAllPolicy;
 pub use auth::{
@@ -34,3 +35,7 @@ pub use domain::{
 pub use error::{StoreError, StoreResult};
 pub use repo::{NewOAuthUser, NewPasswordUser, Repo};
 pub use repo_mem::InMemoryRepo;
+pub use sync_protocol::{
+    FrameError, PROTOCOL_VERSION as SYNC_PROTOCOL_VERSION, PageDataEntry, SyncMessage,
+    decode_frame, encode_frame, page_hash,
+};

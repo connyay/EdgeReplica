@@ -1,11 +1,12 @@
-//! Worker-side dispatch for `SyncService` calls.
+//! Worker-side WebSocket upgrade forwarder for sync.
 //!
-//! The worker is a thin auth/routing edge for sync: it verifies the sync
-//! macaroon, derives the DurableObject name from the `database` caveat,
-//! and forwards the request through `stub.fetch` so the bidi body streams
-//! straight from the client to the DO. The DO re-verifies the same token
-//! before dispatching to the ConnectRPC handler — see
-//! [`crate::middleware::do_sync_auth`].
+//! The worker is a thin auth/routing edge for sync: it verifies the
+//! sync macaroon, derives the DurableObject name from the `database`
+//! caveat, and forwards the upgrade request through `stub.fetch`. The
+//! DO terminates the WebSocket and runs the FSM (see
+//! [`crate::do_sync_ws`]). A missing or invalid token short-circuits
+//! with 401 here so the upgrade never reaches the DO; the DO
+//! independently re-verifies on the inside as defense in depth.
 
 use std::sync::Arc;
 
@@ -15,21 +16,21 @@ use worker::{Body, Env, HttpRequest, Result, request_to_wasm, response_from_wasm
 
 use crate::middleware::extract_bearer;
 
-/// Path prefix that identifies a `SyncService` ConnectRPC call. Anything
-/// under this prefix is forwarded to the per-database DO.
-pub const SYNC_PATH_PREFIX: &str = "/edgereplica.sync.v1.SyncService/";
+/// Single fixed path the sync WebSocket lives at. The macaroon's
+/// `database` caveat picks the DO; the URL path doesn't carry routing
+/// information beyond identifying this as a sync call.
+pub const SYNC_PATH: &str = "/sync";
 
 /// Binding name for the `EdgeReplica` DurableObject namespace (matches
 /// `wrangler.toml`).
 const DO_BINDING: &str = "EDGE_REPLICA";
 
-/// Forward a `SyncService` request to the appropriate DurableObject.
+/// Forward a sync WebSocket upgrade to the appropriate DurableObject.
 ///
-/// Auth: verifies the bearer macaroon and reads the `database` caveat. A
-/// missing or invalid token short-circuits with 401 here; the DO will
-/// independently re-verify on success. The URL path is *not* checked
-/// against the caveat's `database` — the caveat is the source of truth
-/// for which DO handles the call.
+/// `stub.fetch_with_request` propagates the upgrade headers and returns
+/// a 101 response with the DO's `WebSocket` extension still attached.
+/// `response_from_wasm` preserves that extension on the round-trip back
+/// to the client.
 pub async fn forward(
     req: HttpRequest,
     env: &Env,

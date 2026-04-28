@@ -1,8 +1,6 @@
-pub mod do_sync_auth;
 pub mod request_id;
 pub mod session_auth;
 
-pub use do_sync_auth::{DoSyncAuthLayer, require_sync};
 pub use request_id::{HEADER_NAME, RequestId, RequestIdLayer};
 pub use session_auth::{SessionAuthLayer, require_session};
 

@@ -6,39 +6,56 @@
 //! narrow trait covering the operations the FSM actually needs, with two
 //! impls: `SqlSyncStorage` (wasm32, real DO) and `InMemorySyncStorage`
 //! (host tests).
+//!
+//! Hashes are 32-byte BLAKE3 digests carried as `bytes::Bytes` to match
+//! the on-the-wire `SyncMessage` shape; no per-comparison hex encode.
 
+use bytes::Bytes;
 use edgereplica_shared::StoreResult;
+
+pub use edgereplica_shared::page_hash;
 
 /// Subset of `SqlStorage` that the FSM relies on. Kept deliberately
 /// minimal so `InMemorySyncStorage` (used only by tests) is trivial.
 pub trait SyncStorage {
-    fn get_page_hash(&self, page_no: u32) -> StoreResult<Option<String>>;
-    fn get_page(&self, page_no: u32) -> StoreResult<Option<Vec<u8>>>;
-    fn put_page(&self, page_no: u32, data: &[u8], hash: &str, now_ms: i64) -> StoreResult<()>;
+    fn get_page_hash(&self, page_no: u32) -> StoreResult<Option<Bytes>>;
+    fn get_page(&self, page_no: u32) -> StoreResult<Option<Bytes>>;
+    fn put_page(&self, page_no: u32, data: &[u8], hash: &[u8], now_ms: i64) -> StoreResult<()>;
     fn max_page(&self) -> StoreResult<u32>;
-}
 
-/// SHA-256 of the page bytes, hex-lowercase. Uniform across both impls
-/// so a host test that hashes a page produces the same string the wasm
-/// build would.
-pub fn page_hash(data: &[u8]) -> String {
-    use sha2::{Digest, Sha256};
-    hex::encode(Sha256::digest(data))
-}
-
-/// Combined hash over a contiguous range. Stable across impls so a
-/// `PageHashBatch` from the client matches a server-side recomputation
-/// regardless of host vs wasm. Pages outside the stored range
-/// contribute nothing.
-pub fn combined_hash<S: SyncStorage>(storage: &S, start: u32, end: u32) -> StoreResult<String> {
-    use sha2::{Digest, Sha256};
-    let mut hasher = Sha256::new();
-    for page_no in start..=end {
-        if let Some(h) = storage.get_page_hash(page_no)? {
-            hasher.update(h.as_bytes());
+    /// Combined BLAKE3 digest over the page hashes in `start..=end`, in
+    /// page_no order. Default impl issues one query per page; the SQL impl
+    /// overrides with a single range scan so `PageHashBatch` doesn't fan
+    /// out into N queries.
+    fn combined_hash(&self, start: u32, end: u32) -> StoreResult<Bytes> {
+        let mut hasher = blake3::Hasher::new();
+        for page_no in start..=end {
+            if let Some(h) = self.get_page_hash(page_no)? {
+                hasher.update(&h);
+            }
         }
+        Ok(Bytes::copy_from_slice(hasher.finalize().as_bytes()))
     }
-    Ok(hex::encode(hasher.finalize()))
+
+    /// Iterate page bytes in `start..=end` in ascending page_no order,
+    /// invoking `emit` once per page that exists. Default impl issues one
+    /// query per page; the SQL impl overrides with a single cursor so a
+    /// huge DB doesn't materialize as N `Vec<u8>`s on the heap. The
+    /// callback is invoked under the cursor — pages can be sent and
+    /// dropped one at a time without buffering the whole walk.
+    fn iter_pages_in_range(
+        &self,
+        start: u32,
+        end: u32,
+        emit: &mut dyn FnMut(u32, Bytes) -> StoreResult<()>,
+    ) -> StoreResult<()> {
+        for page_no in start..=end {
+            if let Some(data) = self.get_page(page_no)? {
+                emit(page_no, data)?;
+            }
+        }
+        Ok(())
+    }
 }
 
 // =================== InMemory impl (host tests) ===================
@@ -51,11 +68,13 @@ mod in_memory {
     use std::collections::BTreeMap;
     use std::sync::Mutex;
 
+    use bytes::Bytes;
+
     use super::{StoreResult, SyncStorage};
 
     struct Page {
-        data: Vec<u8>,
-        hash: String,
+        data: Bytes,
+        hash: Bytes,
     }
 
     /// Host-side fake. Mirrors `SqlSyncStorage` semantics exactly so a
@@ -72,7 +91,7 @@ mod in_memory {
     }
 
     impl SyncStorage for InMemorySyncStorage {
-        fn get_page_hash(&self, page_no: u32) -> StoreResult<Option<String>> {
+        fn get_page_hash(&self, page_no: u32) -> StoreResult<Option<Bytes>> {
             Ok(self
                 .pages
                 .lock()
@@ -81,7 +100,7 @@ mod in_memory {
                 .map(|p| p.hash.clone()))
         }
 
-        fn get_page(&self, page_no: u32) -> StoreResult<Option<Vec<u8>>> {
+        fn get_page(&self, page_no: u32) -> StoreResult<Option<Bytes>> {
             Ok(self
                 .pages
                 .lock()
@@ -90,12 +109,18 @@ mod in_memory {
                 .map(|p| p.data.clone()))
         }
 
-        fn put_page(&self, page_no: u32, data: &[u8], hash: &str, _now_ms: i64) -> StoreResult<()> {
+        fn put_page(
+            &self,
+            page_no: u32,
+            data: &[u8],
+            hash: &[u8],
+            _now_ms: i64,
+        ) -> StoreResult<()> {
             self.pages.lock().unwrap().insert(
                 page_no,
                 Page {
-                    data: data.to_vec(),
-                    hash: hash.to_string(),
+                    data: Bytes::copy_from_slice(data),
+                    hash: Bytes::copy_from_slice(hash),
                 },
             );
             Ok(())
@@ -145,20 +170,26 @@ mod sql_storage {
         StoreError::backend(format!("{label}: {e}"))
     }
 
+    /// Both `data` and `hash` are decoded via `bytes::Bytes` rather than
+    /// `Vec<u8>`. `serde-wasm-bindgen` round-trips a SQLite `BLOB` as a JS
+    /// byte buffer (calling `serialize_bytes`); `Vec<u8>`'s default
+    /// `Deserialize` only implements `visit_seq` and rejects that type with
+    /// the surprising `invalid type: byte array, expected a sequence` error.
+    /// `bytes::Bytes` (with the `serde` feature) implements `visit_byte_buf`
+    /// and accepts the JS shape directly.
     #[derive(Deserialize)]
     struct HashRow {
-        hash: String,
+        hash: Bytes,
     }
 
-    /// `data` is decoded via `bytes::Bytes` rather than `Vec<u8>`.
-    /// `serde-wasm-bindgen` round-trips a SQLite `BLOB` as a JS byte buffer
-    /// (calling `serialize_bytes`); `Vec<u8>`'s default `Deserialize` only
-    /// implements `visit_seq` and rejects that type with the surprising
-    /// `invalid type: byte array, expected a sequence` error. `bytes::Bytes`
-    /// (with the `serde` feature) implements `visit_byte_buf` and accepts
-    /// the JS shape directly.
     #[derive(Deserialize)]
     struct DataRow {
+        data: Bytes,
+    }
+
+    #[derive(Deserialize)]
+    struct PageRow {
+        page_no: i64,
         data: Bytes,
     }
 
@@ -169,7 +200,7 @@ mod sql_storage {
     }
 
     impl SyncStorage for SqlSyncStorage {
-        fn get_page_hash(&self, page_no: u32) -> StoreResult<Option<String>> {
+        fn get_page_hash(&self, page_no: u32) -> StoreResult<Option<Bytes>> {
             let cursor = self
                 .sql
                 .exec(
@@ -185,7 +216,7 @@ mod sql_storage {
             }
         }
 
-        fn get_page(&self, page_no: u32) -> StoreResult<Option<Vec<u8>>> {
+        fn get_page(&self, page_no: u32) -> StoreResult<Option<Bytes>> {
             let cursor = self
                 .sql
                 .exec(
@@ -195,13 +226,13 @@ mod sql_storage {
                 .map_err(|e| err("get_page", e))?;
             let mut iter = cursor.next::<DataRow>();
             match iter.next() {
-                Some(Ok(row)) => Ok(Some(row.data.to_vec())),
+                Some(Ok(row)) => Ok(Some(row.data)),
                 Some(Err(e)) => Err(StoreError::backend(format!("decode data: {e}"))),
                 None => Ok(None),
             }
         }
 
-        fn put_page(&self, page_no: u32, data: &[u8], hash: &str, now_ms: i64) -> StoreResult<()> {
+        fn put_page(&self, page_no: u32, data: &[u8], hash: &[u8], now_ms: i64) -> StoreResult<()> {
             self.sql
                 .exec(
                     "INSERT OR REPLACE INTO pages (page_no, data, hash, updated_at_ms) \
@@ -209,11 +240,56 @@ mod sql_storage {
                     Some(vec![
                         (page_no as i64).into(),
                         data.to_vec().into(),
-                        hash.into(),
+                        hash.to_vec().into(),
                         now_ms.into(),
                     ]),
                 )
                 .map_err(|e| err("put_page", e))?;
+            Ok(())
+        }
+
+        /// Single range scan rather than the trait default's per-page query.
+        /// Hashes are fixed 32-byte digests, so the full result set fits in
+        /// `(end - start + 1) * 32` bytes — bounded enough to materialize.
+        fn combined_hash(&self, start: u32, end: u32) -> StoreResult<Bytes> {
+            let cursor = self
+                .sql
+                .exec(
+                    "SELECT hash FROM pages WHERE page_no BETWEEN ? AND ? \
+                     ORDER BY page_no",
+                    Some(vec![(start as i64).into(), (end as i64).into()]),
+                )
+                .map_err(|e| err("combined_hash", e))?;
+            let mut hasher = blake3::Hasher::new();
+            for row in cursor.next::<HashRow>() {
+                let row = row.map_err(|e| StoreError::backend(format!("decode hash: {e}")))?;
+                hasher.update(&row.hash);
+            }
+            Ok(Bytes::copy_from_slice(hasher.finalize().as_bytes()))
+        }
+
+        /// Single cursor over the page range. The caller's `emit` runs under
+        /// the cursor — each `Bytes` is dropped (and its frame shipped) before
+        /// the next row is decoded, so a 1 GB DB doesn't materialize 1 GB of
+        /// `Bytes` on the heap.
+        fn iter_pages_in_range(
+            &self,
+            start: u32,
+            end: u32,
+            emit: &mut dyn FnMut(u32, Bytes) -> StoreResult<()>,
+        ) -> StoreResult<()> {
+            let cursor = self
+                .sql
+                .exec(
+                    "SELECT page_no, data FROM pages WHERE page_no BETWEEN ? AND ? \
+                     ORDER BY page_no",
+                    Some(vec![(start as i64).into(), (end as i64).into()]),
+                )
+                .map_err(|e| err("iter_pages_in_range", e))?;
+            for row in cursor.next::<PageRow>() {
+                let row = row.map_err(|e| StoreError::backend(format!("decode page: {e}")))?;
+                emit(row.page_no.max(0) as u32, row.data)?;
+            }
             Ok(())
         }
 

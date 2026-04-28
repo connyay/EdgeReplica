@@ -12,6 +12,7 @@ mod config;
 mod db_cmd;
 mod pages;
 mod sync_cmd;
+mod sync_ws;
 mod transport;
 
 #[derive(Parser, Debug)]

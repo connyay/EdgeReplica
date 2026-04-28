@@ -1,13 +1,8 @@
 //! Versioned schema migrations for the EdgeReplica DurableObject's
-//! `SqlStorage`. v1 EdgeReplica hardcoded `CREATE TABLE IF NOT EXISTS`
-//! calls in `DurableObject::new`; that's a constructor, not a migration
-//! entry point, and it leaves no room for future ALTERs.
-//!
-//! Each migration is a single `(version, sql)` pair. `sql` may contain
-//! multiple statements separated by `;`. On first request per isolate the
-//! DO calls `ensure_schema(&sql)` which reads `MAX(version)` from
-//! `schema_version`, applies any newer migrations in order, then stamps
-//! the new version.
+//! `SqlStorage`. Each migration is a `(version, sql)` pair; `sql` may
+//! contain multiple statements separated by `;`. `ensure_schema` reads
+//! `MAX(version)` from `schema_version`, applies any newer migrations in
+//! order, then stamps the new version.
 
 #![cfg(target_arch = "wasm32")]
 
@@ -28,7 +23,8 @@ pub const MIGRATIONS: &[Migration] = &[Migration {
         CREATE TABLE IF NOT EXISTS pages (
             page_no INTEGER PRIMARY KEY,
             data BLOB NOT NULL,
-            hash TEXT NOT NULL,
+            -- 32-byte BLAKE3 digest of `data`
+            hash BLOB NOT NULL,
             updated_at_ms INTEGER NOT NULL
         );
     "#,

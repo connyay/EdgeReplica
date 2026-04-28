@@ -1,9 +1,10 @@
-//! ConnectRPC client transport setup and authed-client helpers.
+//! ConnectRPC client transport setup for the **admin** API. Sync uses a
+//! WebSocket transport (see [`crate::sync_ws`]); this module only deals
+//! with the unary control-plane RPCs.
 
 use anyhow::{Context, Result, anyhow};
 use connectrpc::client::{CallOptions, ClientConfig, HttpClient};
 use edgereplica_protocol::admin::v1::AdminServiceClient;
-use edgereplica_protocol::sync::v1::SyncServiceClient;
 use http::{HeaderValue, Uri};
 
 use crate::config::Config;
@@ -13,26 +14,12 @@ pub fn admin_client(server: &str) -> Result<AdminServiceClient<HttpClient>> {
     Ok(AdminServiceClient::new(http, config))
 }
 
-pub fn sync_client(server: &str) -> Result<SyncServiceClient<HttpClient>> {
-    let (http, config) = build(server)?;
-    Ok(SyncServiceClient::new(http, config))
-}
-
 /// Build an admin client authed with the session token from `config`.
 pub fn authed_admin_client(
     config: &Config,
 ) -> Result<(AdminServiceClient<HttpClient>, CallOptions)> {
     let token = config.require_session()?;
     Ok((admin_client(&config.server)?, auth_options(token)?))
-}
-
-/// Build a sync client authed with an explicit sync token (issued by
-/// `db token`), since sync uses the sync token rather than the session.
-pub fn authed_sync_client(
-    config: &Config,
-    token: &str,
-) -> Result<(SyncServiceClient<HttpClient>, CallOptions)> {
-    Ok((sync_client(&config.server)?, auth_options(token)?))
 }
 
 fn auth_options(token: &str) -> Result<CallOptions> {

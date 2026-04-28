@@ -18,6 +18,8 @@ use worker::{Context, Env, HttpRequest, event};
 pub mod clock_worker;
 pub mod do_edge_replica;
 pub mod do_migrations;
+#[cfg(target_arch = "wasm32")]
+pub mod do_sync_ws;
 pub mod middleware;
 pub mod repo_d1;
 pub mod routes;
@@ -45,7 +47,7 @@ async fn fetch(
     }
 
     #[cfg(target_arch = "wasm32")]
-    if req.uri().path().starts_with(sync_forward::SYNC_PATH_PREFIX) {
+    if req.uri().path() == sync_forward::SYNC_PATH {
         let state = build_state(&env).await?;
         let resp = sync_forward::forward(req, &env, &state.keyring, &state.clock).await?;
         return Ok(resp.map(Either::Right));

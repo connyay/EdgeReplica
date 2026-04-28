@@ -8,8 +8,9 @@
 use std::path::Path;
 
 use anyhow::{Context, Result};
+use bytes::Bytes;
+use edgereplica_shared::page_hash;
 use rusqlite::{Connection, OpenFlags};
-use sha2::{Digest, Sha256};
 
 pub struct PageReader {
     conn: Connection,
@@ -46,14 +47,14 @@ impl PageReader {
 
     /// Read the next page's bytes, hash them, drop the bytes, return the
     /// hash. Returns `Ok(None)` when exhausted.
-    pub fn next_hash(&mut self) -> Result<Option<(u32, String)>> {
+    pub fn next_hash(&mut self) -> Result<Option<(u32, Bytes)>> {
         if self.next_page > self.max_page {
             return Ok(None);
         }
         let pgno = self.next_page;
         let data = self.read_page(pgno)?;
         self.next_page = pgno + 1;
-        Ok(Some((pgno, page_hash_hex(&data))))
+        Ok(Some((pgno, page_hash(&data))))
     }
 
     pub fn read_page(&mut self, page_no: u32) -> Result<Vec<u8>> {
@@ -111,8 +112,4 @@ impl Drop for PageWriter {
             let _ = self.conn.execute_batch("ROLLBACK");
         }
     }
-}
-
-fn page_hash_hex(data: &[u8]) -> String {
-    hex::encode(Sha256::digest(data))
 }

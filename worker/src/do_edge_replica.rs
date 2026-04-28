@@ -1,47 +1,37 @@
 //! `EdgeReplica` DurableObject. One instance per (org_id, database_id),
 //! addressed by the worker via `EDGE_REPLICA.id_from_name(...)`.
 //!
-//! The DO **hosts** the ConnectRPC `SyncService` directly — the worker
-//! just verifies the macaroon at the edge and forwards via `stub.fetch`.
-//! Hosting here keeps the FSM next to the `SqlStorage` it reads/writes
-//! and avoids re-encoding envelopes between worker and DO.
+//! The DO terminates the sync WebSocket directly — the worker verifies
+//! the macaroon at the public edge and forwards the upgrade via
+//! `stub.fetch`, then this DO re-verifies and runs the FSM in
+//! [`crate::do_sync_ws`].
 //!
-//! The DO trait's `fetch` signature is fixed to `worker::Request ->
-//! worker::Response`, so we hop into and out of `http::Request<worker::Body>`
-//! (via worker's `http` feature) to drive the tower stack.
+//! AdminService is not hosted here; it lives in the worker (see
+//! `crate::services::AdminServer` wired in `lib.rs`). The DO accepts
+//! only WebSocket upgrade requests; anything else returns 400.
 
 #![cfg(target_arch = "wasm32")]
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use connectrpc::{ConnectRpcService, Router as RpcRouter};
-use edgereplica_protocol::sync::v1::SyncServiceExt;
-use edgereplica_shared::SharedClock;
-use tower::{Layer, Service};
+use edgereplica_shared::{Keyring, SharedClock};
 // `worker::wasm_bindgen` re-exports the `wasm-bindgen` crate's macro under
 // the `wasm_bindgen` name, which the `#[durable_object]` macro expansion
 // invokes unqualified. Bringing it into scope makes that resolve.
 use worker::wasm_bindgen;
-use worker::{
-    DurableObject, Env, Request, Response, Result, SqlStorage, State, durable_object,
-    request_from_wasm, response_to_wasm, web_sys,
-};
+use worker::{DurableObject, Env, Request, Response, Result, SqlStorage, State, durable_object};
 
 use crate::clock_worker::WorkerDateClock;
 use crate::do_migrations;
+use crate::do_sync_ws;
 use crate::load_keyring;
-use crate::middleware::{DoSyncAuthLayer, RequestIdLayer};
-use crate::services::SyncServer;
-use crate::services::sync_storage::SqlSyncStorage;
 
 #[durable_object]
 pub struct EdgeReplica {
     sql: SqlStorage,
     clock: SharedClock,
-    auth: DoSyncAuthLayer,
-    request_id: RequestIdLayer,
-    service: ConnectRpcService<RpcRouter>,
+    keyring: Arc<Keyring>,
     /// Per-DO migration latch. Must be on the struct (not a `static`)
     /// because a single wasm isolate hosts many DO instances and each
     /// has its own SQLite database. A `static` would let the first DO
@@ -55,18 +45,10 @@ impl DurableObject for EdgeReplica {
         let sql = state.storage().sql();
         let keyring = Arc::new(load_keyring(&env));
         let clock: SharedClock = Arc::new(WorkerDateClock::new());
-        let storage = Arc::new(SqlSyncStorage::new(sql.clone()));
-        let server = Arc::new(SyncServer::new(storage, Arc::clone(&clock)));
-        let router = server.register(RpcRouter::new());
-        let service = ConnectRpcService::new(router);
-        let auth = DoSyncAuthLayer::new(Arc::clone(&keyring), Arc::clone(&clock));
-        let request_id = RequestIdLayer::new();
         Self {
             sql,
             clock,
-            auth,
-            request_id,
-            service,
+            keyring,
             schema_ready: AtomicBool::new(false),
         }
     }
@@ -74,19 +56,19 @@ impl DurableObject for EdgeReplica {
     async fn fetch(&self, req: Request) -> Result<Response> {
         self.ensure_schema()?;
 
-        let web_req: web_sys::Request = (&req).try_into()?;
-        let http_req = request_from_wasm(web_req)
-            .map_err(|e| worker::Error::RustError(format!("from_wasm req: {e}")))?;
+        if !is_websocket_upgrade(&req) {
+            return Response::error(
+                "EdgeReplica DO accepts only WebSocket upgrades".to_string(),
+                400,
+            );
+        }
 
-        let mut svc = self.request_id.layer(self.auth.layer(self.service.clone()));
-        let http_resp = svc
-            .call(http_req)
-            .await
-            .expect("ConnectRpcService is infallible by design");
-
-        let web_resp = response_to_wasm(http_resp)
-            .map_err(|e| worker::Error::RustError(format!("to_wasm resp: {e}")))?;
-        Ok(Response::from(web_resp))
+        do_sync_ws::handle_upgrade(
+            self.sql.clone(),
+            Arc::clone(&self.clock),
+            Arc::clone(&self.keyring),
+            &req,
+        )
     }
 }
 
@@ -100,4 +82,13 @@ impl EdgeReplica {
         self.schema_ready.store(true, Ordering::Relaxed);
         Ok(())
     }
+}
+
+fn is_websocket_upgrade(req: &Request) -> bool {
+    req.headers()
+        .get("Upgrade")
+        .ok()
+        .flatten()
+        .map(|s| s.eq_ignore_ascii_case("websocket"))
+        .unwrap_or(false)
 }
