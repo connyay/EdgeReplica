@@ -11,12 +11,14 @@ use edgereplica_protocol::sync::v1::{
 };
 
 use crate::config::{Config, resolve_secret};
-use crate::pages::{self, Page};
+use crate::pages::{PageReader, PageWriter};
 use crate::transport;
 
 /// Wire protocol version. Bumped together with the worker.
 const PROTOCOL_VERSION: u32 = 1;
-const CHUNK_SIZE: usize = 64;
+/// Number of `PageHash` envelopes to send before pausing to drain any
+/// `RequestPage` responses queued by the server.
+const HASH_BATCH: u32 = 64;
 const DEFAULT_PAGE_SIZE: u32 = 4096;
 
 type SyncStream<B> = connectrpc::client::BidiStream<B, ClientEnvelope, ServerEnvelopeView<'static>>;
@@ -46,9 +48,9 @@ pub async fn push(args: PushArgs, config: Config) -> Result<()> {
     let (client, opts) = transport::authed_sync_client(&config, &token)?;
     let mut stream = client.sync_with_options(opts).await.context("open sync")?;
 
-    let mut pages = pages::iter_chunks(&args.db, CHUNK_SIZE)
-        .with_context(|| format!("read {}", args.db.display()))?;
-    let max_page = pages.max_page();
+    let mut reader =
+        PageReader::open(&args.db).with_context(|| format!("read {}", args.db.display()))?;
+    let max_page = reader.max_page();
 
     stream
         .send(client_hello(max_page, DEFAULT_PAGE_SIZE))
@@ -62,23 +64,16 @@ pub async fn push(args: PushArgs, config: Config) -> Result<()> {
         None => bail!("server closed before HelloReply"),
     }
 
-    // TODO: stream pages instead of materializing them all. The current
-    // implementation defeats `iter_chunks`'s point — fine for small
-    // dev DBs, fatal for multi-GB ones.
-    let mut all: Vec<Page> = Vec::new();
-    for chunk in pages.by_ref() {
-        all.extend(chunk?);
-    }
-    let index: HashMap<u32, &Page> = all.iter().map(|p| (p.page_no, p)).collect();
-
-    for chunk in all.chunks(CHUNK_SIZE) {
-        for page in chunk {
-            stream
-                .send(client_page_hash(page.page_no, &page.hash))
-                .await
-                .with_context(|| format!("send PageHash {}", page.page_no))?;
+    let mut sent = 0u32;
+    while let Some((pgno, hash)) = reader.next_hash()? {
+        stream
+            .send(client_page_hash(pgno, &hash))
+            .await
+            .with_context(|| format!("send PageHash {pgno}"))?;
+        sent += 1;
+        if sent.is_multiple_of(HASH_BATCH) {
+            process_responses(&mut stream, &mut reader, false).await?;
         }
-        process_responses(&mut stream, &index, false).await?;
     }
 
     stream
@@ -86,7 +81,7 @@ pub async fn push(args: PushArgs, config: Config) -> Result<()> {
         .await
         .context("send Complete")?;
     stream.close_send();
-    process_responses(&mut stream, &index, true).await?;
+    process_responses(&mut stream, &mut reader, true).await?;
 
     Ok(())
 }
@@ -97,13 +92,11 @@ pub async fn pull(args: PullArgs, config: Config) -> Result<()> {
     let mut stream = client.sync_with_options(opts).await.context("open sync")?;
 
     let (local_max, local_hashes) = if args.db.exists() {
-        let pages_iter = pages::iter_chunks(&args.db, CHUNK_SIZE)?;
-        let max = pages_iter.max_page();
-        let mut hashes: HashMap<u32, String> = HashMap::new();
-        for chunk in pages_iter {
-            for p in chunk? {
-                hashes.insert(p.page_no, p.hash);
-            }
+        let mut reader = PageReader::open(&args.db)?;
+        let max = reader.max_page();
+        let mut hashes: HashMap<u32, String> = HashMap::with_capacity(max as usize);
+        while let Some((pgno, hash)) = reader.next_hash()? {
+            hashes.insert(pgno, hash);
         }
         (max, hashes)
     } else {
@@ -123,7 +116,8 @@ pub async fn pull(args: PullArgs, config: Config) -> Result<()> {
     };
 
     let highest = local_max.max(server_max);
-    let mut received: Vec<Page> = Vec::new();
+    let mut writer =
+        PageWriter::open(&args.db).with_context(|| format!("open rw {}", args.db.display()))?;
 
     for page_no in 1..=highest {
         let local_hash = local_hashes.get(&page_no).map(String::as_str).unwrap_or("");
@@ -131,7 +125,7 @@ pub async fn pull(args: PullArgs, config: Config) -> Result<()> {
             .send(client_page_hash(page_no, local_hash))
             .await
             .with_context(|| format!("send PageHash {page_no}"))?;
-        receive_pages(&mut stream, &mut received, false).await?;
+        receive_pages(&mut stream, &mut writer, false).await?;
     }
 
     stream
@@ -139,21 +133,17 @@ pub async fn pull(args: PullArgs, config: Config) -> Result<()> {
         .await
         .context("send Complete")?;
     stream.close_send();
-    receive_pages(&mut stream, &mut received, true).await?;
-
-    if !received.is_empty() {
-        pages::write_pages(&args.db, &received)
-            .with_context(|| format!("write to {}", args.db.display()))?;
-    }
+    receive_pages(&mut stream, &mut writer, true).await?;
+    writer.commit()?;
     Ok(())
 }
 
 /// Read envelopes from the server; reply to `RequestPage` with bytes
-/// from `index`. Returns after one envelope when `until_complete`
-/// is false, or after `SyncComplete`/`Error` when true.
+/// the reader fetches on demand. Returns after one envelope when
+/// `until_complete` is false, or after `SyncComplete`/`Error` when true.
 async fn process_responses<B>(
     stream: &mut SyncStream<B>,
-    index: &HashMap<u32, &Page>,
+    reader: &mut PageReader,
     until_complete: bool,
 ) -> Result<()>
 where
@@ -167,21 +157,17 @@ where
         let envelope = envelope.to_owned_message();
         match envelope.payload {
             Some(ServerPayload::RequestPage(rp)) => {
-                let page = index
-                    .get(&rp.page_no)
-                    .ok_or_else(|| anyhow!("server requested unknown page {}", rp.page_no))?;
+                let data = reader.read_page(rp.page_no)?;
                 stream
-                    .send(client_page_data(page.page_no, page.data.clone()))
+                    .send(client_page_data(rp.page_no, data))
                     .await
                     .with_context(|| format!("send PageData {}", rp.page_no))?;
             }
             Some(ServerPayload::RequestPages(rps)) => {
                 for n in rps.page_numbers {
-                    let page = index
-                        .get(&n)
-                        .ok_or_else(|| anyhow!("server requested unknown page {n}"))?;
+                    let data = reader.read_page(n)?;
                     stream
-                        .send(client_page_data(page.page_no, page.data.clone()))
+                        .send(client_page_data(n, data))
                         .await
                         .with_context(|| format!("send PageData {n}"))?;
                 }
@@ -204,7 +190,7 @@ where
 
 async fn receive_pages<B>(
     stream: &mut SyncStream<B>,
-    received: &mut Vec<Page>,
+    writer: &mut PageWriter,
     until_complete: bool,
 ) -> Result<()>
 where
@@ -218,12 +204,7 @@ where
         let envelope = envelope.to_owned_message();
         match envelope.payload {
             Some(ServerPayload::PageData(pd)) => {
-                let hash = pages::page_hash_hex(&pd.data);
-                received.push(Page {
-                    page_no: pd.page_no,
-                    data: pd.data,
-                    hash,
-                });
+                writer.write(pd.page_no, &pd.data)?;
             }
             Some(ServerPayload::SyncComplete(sc)) => {
                 println!(
