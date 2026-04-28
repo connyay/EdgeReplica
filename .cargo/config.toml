@@ -1,3 +1,7 @@
+[env]
+# Required: SQLITE_ENABLE_DBPAGE_VTAB enables sqlite_dbpage virtual table for direct page access
+LIBSQLITE3_FLAGS = "-DSQLITE_ENABLE_DBPAGE_VTAB"
+
 # `reference-types` keeps the externref table alive through aggressive
 # size-optimization passes. Without it `opt-level = "z"` drops the table and
 # `wasm-bindgen` fails with "externref table required for catch wrappers".
