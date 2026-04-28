@@ -3,7 +3,9 @@
 
 use anyhow::{Context, Result};
 use clap::Args;
-use edgereplica_protocol::admin::v1::{LoginRequest, SignupRequest, WhoamiRequest};
+use edgereplica_protocol::admin::v1::{
+    CompleteOAuthRequest, LoginRequest, SignupRequest, StartOAuthRequest, WhoamiRequest,
+};
 
 use crate::config::{Config, resolve_secret};
 use crate::transport;
@@ -75,5 +77,55 @@ pub async fn whoami(config: Config) -> Result<()> {
     println!("email:   {}", info.email);
     println!("org_id:  {}", info.org_id);
     println!("role:    {}", info.role);
+    Ok(())
+}
+
+#[derive(Args, Debug)]
+pub struct OAuthStartArgs {
+    /// Provider id. Currently only `github` is wired up; Google plugs in
+    /// at the same surface but isn't enabled by default.
+    pub provider: String,
+}
+
+#[derive(Args, Debug)]
+pub struct OAuthCompleteArgs {
+    #[arg(long)]
+    pub state: String,
+    #[arg(long)]
+    pub code: String,
+}
+
+pub async fn oauth_start(args: OAuthStartArgs, config: Config) -> Result<()> {
+    let client = transport::admin_client(&config.server)?;
+    let resp = client
+        .start_o_auth(StartOAuthRequest {
+            provider: args.provider.clone(),
+            ..Default::default()
+        })
+        .await
+        .context("start_oauth rpc")?
+        .into_owned();
+    println!("Open in browser:\n  {}", resp.redirect_url);
+    println!(
+        "After redirect, run:\n  edgereplica oauth complete --state {} --code <code-from-page>",
+        resp.state
+    );
+    Ok(())
+}
+
+pub async fn oauth_complete(args: OAuthCompleteArgs, mut config: Config) -> Result<()> {
+    let client = transport::admin_client(&config.server)?;
+    let resp = client
+        .complete_o_auth(CompleteOAuthRequest {
+            state: args.state,
+            code: args.code,
+            ..Default::default()
+        })
+        .await
+        .context("complete_oauth rpc")?
+        .into_owned();
+    config.session_token = Some(resp.session_token);
+    config.save()?;
+    println!("oauth ok");
     Ok(())
 }

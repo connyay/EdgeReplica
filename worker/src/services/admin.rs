@@ -10,6 +10,8 @@ use edgereplica_shared::{
     AllowAllPolicy, IdentityProvider, MintSessionInput, MintSyncInput, NewPasswordUser,
     PasswordPolicy, Repo, Role, hash_new_password, mint_session, mint_sync, verify_password,
 };
+#[cfg(target_arch = "wasm32")]
+use edgereplica_shared::{NewOAuthUser, OAuthState};
 
 use crate::middleware::require_session;
 use crate::services::common::{
@@ -200,22 +202,20 @@ impl<R: Repo, P: PasswordPolicy> pb::AdminService for AdminServer<R, P> {
 
     async fn start_o_auth(
         &self,
-        _ctx: RpcContext,
-        _request: OwnedView<pb::StartOAuthRequestView<'static>>,
+        ctx: RpcContext,
+        request: OwnedView<pb::StartOAuthRequestView<'static>>,
     ) -> Result<(pb::StartOAuthResponse, RpcContext), ConnectError> {
-        Err(ConnectError::unimplemented(
-            "OAuth not configured on this deployment",
-        ))
+        let resp = oauth_start_impl(self, request.provider).await?;
+        Ok((resp, ctx))
     }
 
     async fn complete_o_auth(
         &self,
-        _ctx: RpcContext,
-        _request: OwnedView<pb::CompleteOAuthRequestView<'static>>,
+        ctx: RpcContext,
+        request: OwnedView<pb::CompleteOAuthRequestView<'static>>,
     ) -> Result<(pb::AuthResponse, RpcContext), ConnectError> {
-        Err(ConnectError::unimplemented(
-            "OAuth not configured on this deployment",
-        ))
+        let resp = oauth_complete_impl(self, request.state, request.code).await?;
+        Ok((resp, ctx))
     }
 
     async fn create_database(
@@ -358,6 +358,175 @@ impl<R: Repo, P: PasswordPolicy> pb::AdminService for AdminServer<R, P> {
             ctx,
         ))
     }
+}
+
+// The wasm32 path lives in `services::oauth` and uses `worker::Fetch`;
+// the host (native test) path returns Unimplemented because there's no
+// IdP to talk to in CI.
+
+#[cfg(target_arch = "wasm32")]
+async fn oauth_start_impl<R: Repo, P: PasswordPolicy>(
+    server: &AdminServer<R, P>,
+    provider: &str,
+) -> Result<pb::StartOAuthResponse, ConnectError> {
+    use crate::services::oauth;
+
+    let provider: IdentityProvider = provider.parse().map_err(|_| {
+        ConnectError::invalid_argument(format!("unknown oauth provider `{provider}`"))
+    })?;
+    match provider {
+        IdentityProvider::GitHub => {}
+        IdentityProvider::Google | IdentityProvider::Password => {
+            return Err(ConnectError::unimplemented(format!(
+                "oauth provider `{provider}` not supported"
+            )));
+        }
+    }
+    let (client_id, _) = oauth::github_credentials(&server.state.config).ok_or_else(|| {
+        ConnectError::unimplemented("github oauth not configured on this deployment")
+    })?;
+    let redirect_uri = oauth_redirect_uri(&server.state.config, provider.as_str())?;
+
+    let state = generate_state();
+    let now_ms = server.state.clock.now_ms();
+    let ttl_ms = server
+        .state
+        .config
+        .oauth_state_ttl_seconds
+        .saturating_mul(1_000);
+    server
+        .state
+        .repo
+        .store_oauth_state(OAuthState {
+            state: state.clone(),
+            provider: provider.to_string(),
+            created_at_ms: now_ms,
+            expires_at_ms: now_ms + ttl_ms,
+        })
+        .await
+        .map_err(map_store_error)?;
+
+    let redirect_url = oauth::github_authorize_url(client_id, &redirect_uri, &state);
+    Ok(pb::StartOAuthResponse {
+        redirect_url,
+        state,
+        ..Default::default()
+    })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+async fn oauth_start_impl<R: Repo, P: PasswordPolicy>(
+    _server: &AdminServer<R, P>,
+    _provider: &str,
+) -> Result<pb::StartOAuthResponse, ConnectError> {
+    Err(ConnectError::unimplemented(
+        "OAuth requires the wasm32 worker runtime",
+    ))
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn oauth_complete_impl<R: Repo, P: PasswordPolicy>(
+    server: &AdminServer<R, P>,
+    state: &str,
+    code: &str,
+) -> Result<pb::AuthResponse, ConnectError> {
+    use crate::services::oauth;
+
+    let now_ms = server.state.clock.now_ms();
+    let stored = server
+        .state
+        .repo
+        .consume_oauth_state(state, now_ms)
+        .await
+        .map_err(map_store_error)?
+        .ok_or_else(|| ConnectError::permission_denied("invalid or expired oauth state"))?;
+
+    let provider: IdentityProvider = stored.provider.parse().map_err(|_| {
+        ConnectError::internal(format!(
+            "stored oauth state has unknown provider `{}`",
+            stored.provider
+        ))
+    })?;
+    match provider {
+        IdentityProvider::GitHub => {}
+        IdentityProvider::Google | IdentityProvider::Password => {
+            return Err(ConnectError::unimplemented(format!(
+                "oauth provider `{provider}` not supported"
+            )));
+        }
+    }
+    let redirect_uri = oauth_redirect_uri(&server.state.config, provider.as_str())?;
+    let identity = oauth::complete_github(&server.state.config, code, &redirect_uri).await?;
+
+    // OAuth users are keyed by (provider, sub); email collisions on
+    // password signup are a separate path.
+    let existing = server
+        .state
+        .repo
+        .find_identity(identity.provider.as_str(), &identity.provider_user_id)
+        .await
+        .map_err(map_store_error)?;
+
+    let user = match existing {
+        Some(ident) => server
+            .state
+            .repo
+            .get_user(&ident.user_id)
+            .await
+            .map_err(map_store_error)?
+            .ok_or_else(|| ConnectError::internal("oauth identity points at missing user"))?,
+        None => server
+            .state
+            .repo
+            .create_oauth_user(
+                NewOAuthUser {
+                    email: identity.email,
+                    provider: identity.provider.to_string(),
+                    provider_user_id: identity.provider_user_id,
+                },
+                now_ms,
+            )
+            .await
+            .map_err(map_store_error)?,
+    };
+
+    let (token, _org, _role) = server.issue_session_for(&user).await?;
+    Ok(pb::AuthResponse {
+        session_token: token,
+        ..Default::default()
+    })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+async fn oauth_complete_impl<R: Repo, P: PasswordPolicy>(
+    _server: &AdminServer<R, P>,
+    _state: &str,
+    _code: &str,
+) -> Result<pb::AuthResponse, ConnectError> {
+    Err(ConnectError::unimplemented(
+        "OAuth requires the wasm32 worker runtime",
+    ))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn oauth_redirect_uri(
+    config: &crate::state::Config,
+    provider: &str,
+) -> Result<String, ConnectError> {
+    if config.oauth_redirect_base.trim().is_empty() {
+        return Err(ConnectError::unimplemented(
+            "OAUTH_REDIRECT_BASE not set on this deployment",
+        ));
+    }
+    let base = config.oauth_redirect_base.trim_end_matches('/');
+    Ok(format!("{base}/oauth/{provider}/callback"))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn generate_state() -> String {
+    let mut buf = [0u8; 16];
+    getrandom::getrandom(&mut buf).expect("getrandom is wired");
+    hex::encode(buf)
 }
 
 #[cfg(test)]
