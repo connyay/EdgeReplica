@@ -63,28 +63,7 @@ pub async fn push(args: PushArgs, config: Config) -> Result<()> {
         PageReader::open(&args.db).with_context(|| format!("read {}", args.db.display()))?;
     let max_page = reader.max_page();
 
-    send(
-        &mut ws,
-        &SyncMessage::Hello {
-            protocol_version: HANDSHAKE_VERSION,
-            page_size: DEFAULT_PAGE_SIZE,
-            max_page,
-        },
-    )
-    .await?;
-
-    match recv(&mut ws).await? {
-        SyncMessage::HelloReply {
-            protocol_version, ..
-        } if protocol_version == HANDSHAKE_VERSION => {}
-        SyncMessage::HelloReply {
-            protocol_version, ..
-        } => bail!(
-            "protocol_version mismatch: client={HANDSHAKE_VERSION}, server={protocol_version}"
-        ),
-        SyncMessage::Error { message } => bail!("server error: {message}"),
-        other => bail!("expected HelloReply, got {other:?}"),
-    }
+    handshake(&mut ws, max_page).await?;
 
     // Stream every (page_no, hash) we have. The server queues a
     // RequestPage for each mismatch; we buffer those and serve them
@@ -140,32 +119,10 @@ pub async fn pull(args: PullArgs, config: Config) -> Result<()> {
         0
     };
 
-    send(
-        &mut ws,
-        &SyncMessage::Hello {
-            protocol_version: HANDSHAKE_VERSION,
-            page_size: DEFAULT_PAGE_SIZE,
-            max_page: local_max,
-        },
-    )
-    .await?;
-
-    match recv(&mut ws).await? {
-        SyncMessage::HelloReply {
-            protocol_version, ..
-        } if protocol_version == HANDSHAKE_VERSION => {}
-        SyncMessage::HelloReply {
-            protocol_version, ..
-        } => bail!(
-            "protocol_version mismatch: client={HANDSHAKE_VERSION}, server={protocol_version}"
-        ),
-        SyncMessage::Error { message } => bail!("server error: {message}"),
-        other => bail!("expected HelloReply, got {other:?}"),
-    }
+    handshake(&mut ws, local_max).await?;
 
     // Send a hash for every local page so the server can decide which
-    // ones differ. Re-open the reader in a separate scope so its handle
-    // doesn't hold a transaction across the await.
+    // ones differ.
     if local_max > 0 {
         let mut reader = PageReader::open(&args.db)?;
         while let Some((page_no, hash)) = reader.next_hash()? {
@@ -257,6 +214,32 @@ fn ws_url(server: &str) -> Result<String> {
         ));
     };
     Ok(format!("{with_scheme}/sync"))
+}
+
+/// Send `Hello` and verify the server's `HelloReply` matches our protocol
+/// version. Used by both push and pull, which only differ in `max_page`.
+async fn handshake(ws: &mut Ws, max_page: u32) -> Result<()> {
+    send(
+        ws,
+        &SyncMessage::Hello {
+            protocol_version: HANDSHAKE_VERSION,
+            page_size: DEFAULT_PAGE_SIZE,
+            max_page,
+        },
+    )
+    .await?;
+    match recv(ws).await? {
+        SyncMessage::HelloReply {
+            protocol_version, ..
+        } if protocol_version == HANDSHAKE_VERSION => Ok(()),
+        SyncMessage::HelloReply {
+            protocol_version, ..
+        } => bail!(
+            "protocol_version mismatch: client={HANDSHAKE_VERSION}, server={protocol_version}"
+        ),
+        SyncMessage::Error { message } => bail!("server error: {message}"),
+        other => bail!("expected HelloReply, got {other:?}"),
+    }
 }
 
 async fn send(ws: &mut Ws, msg: &SyncMessage) -> Result<()> {

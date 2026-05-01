@@ -8,6 +8,8 @@
 
 use worker::SqlStorage;
 
+use crate::services::common::split_sql_statements;
+
 pub struct Migration {
     pub version: i64,
     pub sql: &'static str,
@@ -47,12 +49,10 @@ pub fn ensure_schema(sql: &SqlStorage, now_ms: i64) -> Result<(), MigrationError
     // missing" as version 0.
     let current = current_version(sql).unwrap_or(0);
     for m in MIGRATIONS.iter().filter(|m| m.version > current) {
-        for statement in split_statements(m.sql) {
+        for statement in split_sql_statements(m.sql) {
             sql.exec(&statement, None)
                 .map_err(|e| MigrationError(format!("v{}: {e} [{statement}]", m.version)))?;
         }
-        // Use simple parameter binding rather than format! to keep the SQL
-        // shape literal across migrations.
         sql.exec(
             "INSERT OR REPLACE INTO schema_version (version, applied_at_ms) VALUES (?, ?)",
             Some(vec![m.version.into(), now_ms.into()]),
@@ -76,29 +76,4 @@ fn current_version(sql: &SqlStorage) -> Result<i64, MigrationError> {
         Some(Err(e)) => Err(MigrationError(format!("decode version: {e}"))),
         None => Ok(0),
     }
-}
-
-/// Split a multi-statement SQL string on `;`, stripping whole-line `--`
-/// comments and collapsing whitespace. `SqlStorage::exec` runs one
-/// statement per call, so we don't get to lean on `D1Database::exec`'s
-/// line-oriented heuristic here.
-///
-/// Naive: does not handle `;` inside string literals or `BEGIN ... END`
-/// blocks. Adequate for the current `CREATE TABLE` corpus; revisit
-/// before adding triggers or seed `INSERT`s with embedded semicolons.
-fn split_statements(sql: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    for stmt in sql.split(';') {
-        let cleaned: String = stmt
-            .lines()
-            .map(|l| l.trim())
-            .filter(|l| !l.is_empty() && !l.starts_with("--"))
-            .collect::<Vec<_>>()
-            .join(" ");
-        let cleaned = cleaned.trim().to_string();
-        if !cleaned.is_empty() {
-            out.push(cleaned);
-        }
-    }
-    out
 }

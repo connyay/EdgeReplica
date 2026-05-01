@@ -47,8 +47,7 @@ impl<R: Repo, P: PasswordPolicy> AdminServer<R, P> {
         }
     }
 
-    /// Mint a session token rooted on `user`'s first personal org. Used by
-    /// `signup`, `login`, and (phase 8) the OAuth completion handler.
+    /// Mint a session token rooted on `user`'s first personal org.
     async fn issue_session_for(
         &self,
         user: &User,
@@ -362,10 +361,6 @@ impl<R: Repo, P: PasswordPolicy> pb::AdminService for AdminServer<R, P> {
     }
 }
 
-// The wasm32 path lives in `services::oauth` and uses `worker::Fetch`;
-// the host (native test) path returns Unimplemented because there's no
-// IdP to talk to in CI.
-
 #[cfg(target_arch = "wasm32")]
 async fn oauth_start_impl<R: Repo, P: PasswordPolicy>(
     server: &AdminServer<R, P>,
@@ -460,8 +455,6 @@ async fn oauth_complete_impl<R: Repo, P: PasswordPolicy>(
     let redirect_uri = oauth_redirect_uri(&server.state.config, provider.as_str())?;
     let identity = oauth::complete_github(&server.state.config, code, &redirect_uri).await?;
 
-    // OAuth users are keyed by (provider, sub); email collisions on
-    // password signup are a separate path.
     let existing = server
         .state
         .repo

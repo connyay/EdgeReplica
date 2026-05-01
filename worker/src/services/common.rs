@@ -62,6 +62,34 @@ pub fn validate_email(email: &str) -> Result<(), ConnectError> {
     Ok(())
 }
 
+/// Split a multi-statement SQL string on `;`, stripping whole-line `--`
+/// comments and collapsing whitespace per statement. Naive: does not
+/// handle `;` inside string literals or `BEGIN ... END` blocks. Adequate
+/// for the current `CREATE TABLE` corpus; revisit before adding triggers
+/// or seed `INSERT`s with embedded semicolons.
+pub fn split_sql_statements(sql: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for stmt in sql.split(';') {
+        let cleaned: String = stmt
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty() && !l.starts_with("--"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let cleaned = cleaned.trim().to_string();
+        if !cleaned.is_empty() {
+            out.push(cleaned);
+        }
+    }
+    out
+}
+
+/// SQLite UNIQUE-constraint violations surface from D1 as opaque error
+/// strings; sniff them so callers can map to a typed `AlreadyExists`.
+pub fn is_unique_violation(err: &str) -> bool {
+    err.contains("UNIQUE") || err.contains("constraint")
+}
+
 pub fn validate_database_name(name: &str) -> Result<(), ConnectError> {
     let trimmed = name.trim();
     if trimmed.is_empty() {

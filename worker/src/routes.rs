@@ -81,48 +81,52 @@ fn oauth_error_html(err: &str) -> String {
 }
 
 fn html_escape(s: &str) -> String {
-    s.chars()
-        .map(|c| match c {
-            '<' => "&lt;".into(),
-            '>' => "&gt;".into(),
-            '&' => "&amp;".into(),
-            '"' => "&quot;".into(),
-            '\'' => "&#39;".into(),
-            other => other.to_string(),
-        })
-        .collect()
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '&' => out.push_str("&amp;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#39;"),
+            other => out.push(other),
+        }
+    }
+    out
 }
 
 /// `application/x-www-form-urlencoded` decoder for the limited set of
 /// chars an IdP might return — `+` to space, `%xx` to byte. Bad escapes
 /// fall through unchanged (the IdP's own validation will reject them).
 fn url_decode(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
     let bytes = s.as_bytes();
+    // Decode into bytes first: a `%xx` pair can be one byte of a multi-byte
+    // UTF-8 sequence, so casting byte-as-char would corrupt non-ASCII text.
+    let mut out = Vec::with_capacity(s.len());
     let mut i = 0;
     while i < bytes.len() {
         match bytes[i] {
             b'+' => {
-                out.push(' ');
+                out.push(b' ');
                 i += 1;
             }
             b'%' if i + 2 < bytes.len() => {
                 let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or("");
                 if let Ok(byte) = u8::from_str_radix(hex, 16) {
-                    out.push(byte as char);
+                    out.push(byte);
                     i += 3;
                 } else {
-                    out.push('%');
+                    out.push(b'%');
                     i += 1;
                 }
             }
             other => {
-                out.push(other as char);
+                out.push(other);
                 i += 1;
             }
         }
     }
-    out
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 fn html(status: StatusCode, body: &str) -> Response<ConnectRpcBody> {

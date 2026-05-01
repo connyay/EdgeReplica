@@ -11,6 +11,8 @@
 
 #![cfg(target_arch = "wasm32")]
 
+use std::sync::LazyLock;
+
 use serde::Deserialize;
 
 use crate::domain::{
@@ -19,10 +21,13 @@ use crate::domain::{
 };
 use crate::error::{StoreError, StoreResult};
 use crate::repo::{NewOAuthUser, NewPasswordUser, OrgMemberRow, OrgWithRole, Repo};
+use crate::services::common::{is_unique_violation, split_sql_statements};
 use worker::send::IntoSendFuture;
 use worker::{D1Database, D1PreparedStatement, D1Type};
 
 pub const SCHEMA: &str = include_str!("../migrations/0001_init.sql");
+
+static SCHEMA_STATEMENTS: LazyLock<Vec<String>> = LazyLock::new(|| split_sql_statements(SCHEMA));
 
 pub struct D1Repo {
     db: D1Database,
@@ -37,7 +42,7 @@ impl D1Repo {
     /// by `wrangler dev` when `AUTO_MIGRATE=true`. D1 in production should
     /// run migrations via `wrangler d1 migrations apply` at deploy time.
     pub async fn ensure_schema(&self) -> StoreResult<()> {
-        let stmts: Vec<D1PreparedStatement> = normalized_statements(SCHEMA)
+        let stmts: Vec<D1PreparedStatement> = SCHEMA_STATEMENTS
             .iter()
             .map(|s| self.db.prepare(s))
             .collect();
@@ -49,8 +54,6 @@ impl D1Repo {
         Ok(())
     }
 }
-
-// =================== signup helper ===================
 
 /// Inputs for the four-statement "create user + identity + personal org +
 /// admin membership" batch shared by password and OAuth signup.
@@ -148,8 +151,6 @@ impl D1Repo {
     }
 }
 
-// =================== row types ===================
-
 #[derive(Deserialize)]
 struct UserRow {
     id: String,
@@ -233,10 +234,7 @@ impl TryFrom<OrgMembershipRow> for OrgMembership {
         Ok(OrgMembership {
             user_id: UserId::from(r.user_id),
             org_id: OrgId::from(r.org_id),
-            role: r
-                .role
-                .parse()
-                .map_err(|e: String| StoreError::backend(format!("role: {e}")))?,
+            role: parse_role(&r.role)?,
             created_at_ms: r.created_at_ms,
         })
     }
@@ -279,8 +277,6 @@ impl From<OAuthStateRow> for OAuthState {
         }
     }
 }
-
-// =================== Repo impl ===================
 
 impl Repo for D1Repo {
     async fn get_user(&self, id: &UserId) -> StoreResult<Option<User>> {
@@ -497,10 +493,7 @@ impl Repo for D1Repo {
         let rows: Vec<OrgRowWithRole> = result.results().map_err(d1_err)?;
         rows.into_iter()
             .map(|r| {
-                let role: Role = r
-                    .role
-                    .parse()
-                    .map_err(|e: String| StoreError::backend(format!("role: {e}")))?;
+                let role = parse_role(&r.role)?;
                 Ok((
                     Organization {
                         id: OrgId::from(r.id),
@@ -594,7 +587,7 @@ impl Repo for D1Repo {
             .await
             .map_err(|e| {
                 let s = e.to_string();
-                if s.contains("UNIQUE") || s.contains("constraint") {
+                if is_unique_violation(&s) {
                     StoreError::already_exists(format!("database '{name}' in {org_id}"))
                 } else {
                     StoreError::backend(s)
@@ -698,10 +691,13 @@ impl Repo for D1Repo {
     }
 }
 
-// =================== helpers ===================
-
 fn d1_err(e: impl std::fmt::Display) -> StoreError {
     StoreError::backend(e.to_string())
+}
+
+fn parse_role(s: &str) -> StoreResult<Role> {
+    s.parse()
+        .map_err(|e: String| StoreError::backend(format!("role: {e}")))
 }
 
 /// `D1Type::Integer` is i32-only, but every timestamp we store is `i64`
@@ -732,30 +728,11 @@ where
 {
     db.batch(stmts).into_send().await.map_err(|e| {
         let s = e.to_string();
-        if s.contains("UNIQUE") || s.contains("constraint") {
+        if is_unique_violation(&s) {
             on_unique()
         } else {
             StoreError::backend(format!("batch: {s}"))
         }
     })?;
     Ok(())
-}
-
-/// Strip whole-line comments and split on `;` for D1's `prepare().run()` —
-/// our migration file mixes multi-line DDL that D1's `exec()` can't handle.
-fn normalized_statements(sql: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    for stmt in sql.split(';') {
-        let cleaned: String = stmt
-            .lines()
-            .map(|l| l.trim())
-            .filter(|l| !l.is_empty() && !l.starts_with("--"))
-            .collect::<Vec<_>>()
-            .join(" ");
-        let cleaned = cleaned.trim().to_string();
-        if !cleaned.is_empty() {
-            out.push(cleaned);
-        }
-    }
-    out
 }

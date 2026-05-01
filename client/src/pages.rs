@@ -26,14 +26,14 @@ impl PageReader {
         )
         .with_context(|| format!("open {}", path.display()))?;
         // Empty / brand-new DBs return NULL from MAX(pgno); IFNULL → 0.
-        let max_page: u32 = conn
+        let max_page: i64 = conn
             .query_row(
                 "SELECT IFNULL(MAX(pgno), 0) FROM sqlite_dbpage('main')",
                 [],
-                |r| r.get::<_, i64>(0),
+                |r| r.get(0),
             )
-            .unwrap_or(0)
-            .max(0) as u32;
+            .context("query MAX(pgno)")?;
+        let max_page = u32::try_from(max_page).unwrap_or(0);
         Ok(Self {
             conn,
             next_page: 1,

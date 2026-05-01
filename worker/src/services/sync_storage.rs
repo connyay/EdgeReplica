@@ -171,13 +171,7 @@ mod sql_storage {
         StoreError::backend(format!("{label}: {e}"))
     }
 
-    /// Both `data` and `hash` are decoded via `bytes::Bytes` rather than
-    /// `Vec<u8>`. `serde-wasm-bindgen` round-trips a SQLite `BLOB` as a JS
-    /// byte buffer (calling `serialize_bytes`); `Vec<u8>`'s default
-    /// `Deserialize` only implements `visit_seq` and rejects that type with
-    /// the surprising `invalid type: byte array, expected a sequence` error.
-    /// `bytes::Bytes` (with the `serde` feature) implements `visit_byte_buf`
-    /// and accepts the JS shape directly.
+    // `Bytes` (not `Vec<u8>`) for BLOB columns — see CLAUDE.md gotcha.
     #[derive(Deserialize)]
     struct HashRow {
         hash: Bytes,
@@ -200,37 +194,48 @@ mod sql_storage {
         v: Option<i64>,
     }
 
-    impl SyncStorage for SqlSyncStorage {
-        fn get_page_hash(&self, page_no: u32) -> StoreResult<Option<Bytes>> {
+    impl SqlSyncStorage {
+        fn first_blob<R, F>(
+            &self,
+            label: &'static str,
+            sql: &str,
+            page_no: u32,
+            pick: F,
+        ) -> StoreResult<Option<Bytes>>
+        where
+            R: for<'de> Deserialize<'de>,
+            F: FnOnce(R) -> Bytes,
+        {
             let cursor = self
                 .sql
-                .exec(
-                    "SELECT hash FROM pages WHERE page_no = ?",
-                    Some(vec![(page_no as i64).into()]),
-                )
-                .map_err(|e| err("get_page_hash", e))?;
-            let mut iter = cursor.next::<HashRow>();
+                .exec(sql, Some(vec![(page_no as i64).into()]))
+                .map_err(|e| err(label, e))?;
+            let mut iter = cursor.next::<R>();
             match iter.next() {
-                Some(Ok(row)) => Ok(Some(row.hash)),
-                Some(Err(e)) => Err(StoreError::backend(format!("decode hash: {e}"))),
+                Some(Ok(row)) => Ok(Some(pick(row))),
+                Some(Err(e)) => Err(StoreError::backend(format!("decode {label}: {e}"))),
                 None => Ok(None),
             }
         }
+    }
+
+    impl SyncStorage for SqlSyncStorage {
+        fn get_page_hash(&self, page_no: u32) -> StoreResult<Option<Bytes>> {
+            self.first_blob::<HashRow, _>(
+                "get_page_hash",
+                "SELECT hash FROM pages WHERE page_no = ?",
+                page_no,
+                |r| r.hash,
+            )
+        }
 
         fn get_page(&self, page_no: u32) -> StoreResult<Option<Bytes>> {
-            let cursor = self
-                .sql
-                .exec(
-                    "SELECT data FROM pages WHERE page_no = ?",
-                    Some(vec![(page_no as i64).into()]),
-                )
-                .map_err(|e| err("get_page", e))?;
-            let mut iter = cursor.next::<DataRow>();
-            match iter.next() {
-                Some(Ok(row)) => Ok(Some(row.data)),
-                Some(Err(e)) => Err(StoreError::backend(format!("decode data: {e}"))),
-                None => Ok(None),
-            }
+            self.first_blob::<DataRow, _>(
+                "get_page",
+                "SELECT data FROM pages WHERE page_no = ?",
+                page_no,
+                |r| r.data,
+            )
         }
 
         fn put_page(&self, page_no: u32, data: &[u8], hash: &[u8], now_ms: i64) -> StoreResult<()> {
