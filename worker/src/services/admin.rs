@@ -7,10 +7,8 @@ use buffa::view::OwnedView;
 use connectrpc::{ConnectError, Context as RpcContext};
 use edgereplica_protocol::admin::v1 as pb;
 
-use crate::auth::password::AllowAllPolicy;
 use crate::auth::{
-    MintSessionInput, MintSyncInput, PasswordPolicy, hash_new_password, mint_session, mint_sync,
-    verify_password,
+    MintSessionInput, MintSyncInput, hash_new_password, mint_session, mint_sync, verify_password,
 };
 #[cfg(target_arch = "wasm32")]
 use crate::domain::OAuthState;
@@ -25,28 +23,17 @@ use crate::services::common::{
 };
 use crate::state::SharedState;
 
-pub struct AdminServer<R: Repo, P: PasswordPolicy = AllowAllPolicy> {
+pub struct AdminServer<R: Repo> {
     state: SharedState<R>,
-    password_policy: P,
 }
 
-impl<R: Repo> AdminServer<R, AllowAllPolicy> {
+impl<R: Repo> AdminServer<R> {
     pub fn new(state: SharedState<R>) -> Self {
-        Self {
-            state,
-            password_policy: AllowAllPolicy,
-        }
+        Self { state }
     }
 }
 
-impl<R: Repo, P: PasswordPolicy> AdminServer<R, P> {
-    pub fn with_policy(state: SharedState<R>, policy: P) -> Self {
-        Self {
-            state,
-            password_policy: policy,
-        }
-    }
-
+impl<R: Repo> AdminServer<R> {
     /// Mint a session token rooted on `user`'s first personal org.
     async fn issue_session_for(
         &self,
@@ -99,7 +86,7 @@ fn database_pb(db: &Database) -> pb::Database {
     }
 }
 
-impl<R: Repo, P: PasswordPolicy> pb::AdminService for AdminServer<R, P> {
+impl<R: Repo> pb::AdminService for AdminServer<R> {
     async fn whoami(
         &self,
         ctx: RpcContext,
@@ -133,7 +120,7 @@ impl<R: Repo, P: PasswordPolicy> pb::AdminService for AdminServer<R, P> {
         validate_email(request.email)?;
         let now_ms = self.state.clock.now_ms();
 
-        let password_hash = hash_new_password(&self.password_policy, request.password)
+        let password_hash = hash_new_password(request.password)
             .await
             .map_err(map_password_error)?;
 
@@ -362,8 +349,8 @@ impl<R: Repo, P: PasswordPolicy> pb::AdminService for AdminServer<R, P> {
 }
 
 #[cfg(target_arch = "wasm32")]
-async fn oauth_start_impl<R: Repo, P: PasswordPolicy>(
-    server: &AdminServer<R, P>,
+async fn oauth_start_impl<R: Repo>(
+    server: &AdminServer<R>,
     provider: &str,
 ) -> Result<pb::StartOAuthResponse, ConnectError> {
     use crate::services::oauth;
@@ -412,8 +399,8 @@ async fn oauth_start_impl<R: Repo, P: PasswordPolicy>(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-async fn oauth_start_impl<R: Repo, P: PasswordPolicy>(
-    _server: &AdminServer<R, P>,
+async fn oauth_start_impl<R: Repo>(
+    _server: &AdminServer<R>,
     _provider: &str,
 ) -> Result<pb::StartOAuthResponse, ConnectError> {
     Err(ConnectError::unimplemented(
@@ -422,8 +409,8 @@ async fn oauth_start_impl<R: Repo, P: PasswordPolicy>(
 }
 
 #[cfg(target_arch = "wasm32")]
-async fn oauth_complete_impl<R: Repo, P: PasswordPolicy>(
-    server: &AdminServer<R, P>,
+async fn oauth_complete_impl<R: Repo>(
+    server: &AdminServer<R>,
     state: &str,
     code: &str,
 ) -> Result<pb::AuthResponse, ConnectError> {
@@ -493,8 +480,8 @@ async fn oauth_complete_impl<R: Repo, P: PasswordPolicy>(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-async fn oauth_complete_impl<R: Repo, P: PasswordPolicy>(
-    _server: &AdminServer<R, P>,
+async fn oauth_complete_impl<R: Repo>(
+    _server: &AdminServer<R>,
     _state: &str,
     _code: &str,
 ) -> Result<pb::AuthResponse, ConnectError> {

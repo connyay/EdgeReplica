@@ -3,11 +3,6 @@
 //! Parameters target Workers' CPU budget (m=4MiB, t=2, p=1) — gives ~25-40ms
 //! per hash on Workers hardware in our experiments. Tune up `mem_cost` /
 //! `time_cost` per actual CPU budget at deploy time.
-//!
-//! Password complexity rules follow NIST 800-63B: min 8 chars, no
-//! composition rules. The `PasswordPolicy` trait plumbs through an HIBP-style
-//! check; the demo ships an always-allow stub. Real production would call
-//! the pwnedpasswords range API and reject anything seen in a breach corpus.
 
 use argon2::{Algorithm, Argon2, Params, Version};
 use password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
@@ -37,33 +32,12 @@ fn hasher() -> Argon2<'static> {
     Argon2::new(Algorithm::Argon2id, Version::V0x13, params)
 }
 
-/// Pluggable HIBP-style policy. The default `AllowAllPolicy` never rejects.
-pub trait PasswordPolicy: Send + Sync + 'static {
-    fn check(
-        &self,
-        password: &str,
-    ) -> impl std::future::Future<Output = Result<(), PasswordError>> + Send;
-}
-
-#[derive(Default, Clone)]
-pub struct AllowAllPolicy;
-
-impl PasswordPolicy for AllowAllPolicy {
-    async fn check(&self, _password: &str) -> Result<(), PasswordError> {
-        Ok(())
-    }
-}
-
 /// Validate and hash a new password. Returns the PHC string suitable for
 /// storage in `identities.secret`.
-pub async fn hash_new_password<P: PasswordPolicy>(
-    policy: &P,
-    password: &str,
-) -> Result<String, PasswordError> {
+pub async fn hash_new_password(password: &str) -> Result<String, PasswordError> {
     if password.chars().count() < MIN_PASSWORD_LEN {
         return Err(PasswordError::TooShort(password.chars().count()));
     }
-    policy.check(password).await?;
     let salt = SaltString::generate(&mut OsRng);
     let hash = hasher()
         .hash_password(password.as_bytes(), &salt)
@@ -86,16 +60,14 @@ mod tests {
 
     #[test]
     fn hash_then_verify_roundtrips() {
-        let policy = AllowAllPolicy;
-        let hash = block_on(hash_new_password(&policy, "correct horse battery")).unwrap();
+        let hash = block_on(hash_new_password("correct horse battery")).unwrap();
         verify_password(&hash, "correct horse battery").unwrap();
         assert!(verify_password(&hash, "wrong-password").is_err());
     }
 
     #[test]
     fn rejects_short_password() {
-        let policy = AllowAllPolicy;
-        let err = block_on(hash_new_password(&policy, "short")).unwrap_err();
+        let err = block_on(hash_new_password("short")).unwrap_err();
         assert!(matches!(err, PasswordError::TooShort(5)));
     }
 }
