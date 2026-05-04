@@ -29,9 +29,6 @@ rand_core = { version = "0.6", default-features = false, features = ["getrandom"
 # UUIDs (v4 for nonces). `js` wires getrandom to crypto.getRandomValues on wasm.
 uuid = { version = "1", features = ["v4", "serde", "js"] }
 
-# Sqids for opaque external ids.
-sqids = "0.4"
-
 # HTTP types.
 http = "1"
 http-body = "1"
@@ -53,7 +50,7 @@ hex = "0.4"
 # 32-byte BLAKE3 digests over SQLite pages (sync protocol). `default-features`
 # off for wasm32 — disables the rayon-based parallel hasher we don't use.
 blake3 = { version = "1", default-features = false }
-thiserror = "1"
+thiserror = "2"
 getrandom = { version = "0.2", features = ["js"] }
 
 [profile.release]

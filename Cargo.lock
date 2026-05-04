@@ -723,7 +723,7 @@ dependencies = [
  "rustls",
  "rustls-native-certs",
  "serde",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tokio",
  "tokio-tungstenite",
  "toml",
@@ -744,7 +744,7 @@ dependencies = [
  "http-body",
  "rmp-serde",
  "serde",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -781,7 +781,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tokio",
  "tower",
  "uuid",
