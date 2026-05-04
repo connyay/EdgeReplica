@@ -87,7 +87,7 @@ pub fn split_sql_statements(sql: &str) -> Vec<String> {
 /// SQLite UNIQUE-constraint violations surface from D1 as opaque error
 /// strings; sniff them so callers can map to a typed `AlreadyExists`.
 pub fn is_unique_violation(err: &str) -> bool {
-    err.contains("UNIQUE") || err.contains("constraint")
+    err.contains("UNIQUE constraint")
 }
 
 pub fn validate_database_name(name: &str) -> Result<(), ConnectError> {
