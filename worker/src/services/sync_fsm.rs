@@ -199,6 +199,8 @@ impl<S: SyncStorage + Send + Sync + 'static> SyncFsm<S> {
         client_combined: &[u8],
         emit: Emit<'_>,
     ) -> Result<(), String> {
+        self.client_seen.extend(start_page..=end_page);
+
         let stored = self
             .storage
             .combined_hash(start_page, end_page)
@@ -603,5 +605,175 @@ mod tests {
         assert_eq!(out.len(), 1);
         assert!(matches!(out[0], SyncMessage::HelloReply { .. }));
         assert!(!f.done());
+    }
+
+    fn combined_hash(pages: &[(u32, &[u8])]) -> Bytes {
+        let mut hasher = blake3::Hasher::new();
+        for (_, data) in pages {
+            hasher.update(&page_hash(data));
+        }
+        Bytes::copy_from_slice(hasher.finalize().as_bytes())
+    }
+
+    #[test]
+    fn pull_batch_match_skips_pages_on_complete() {
+        // Server and client have identical pages 1..=3. A matching
+        // PageHashBatch should prevent re-sending them on Complete.
+        let storage = Arc::new(InMemorySyncStorage::new());
+        let p1 = vec![1u8; 4096];
+        let p2 = vec![2u8; 4096];
+        let p3 = vec![3u8; 4096];
+        storage.put_page(1, &p1, &page_hash(&p1), 0).unwrap();
+        storage.put_page(2, &p2, &page_hash(&p2), 0).unwrap();
+        storage.put_page(3, &p3, &page_hash(&p3), 0).unwrap();
+
+        let ch = combined_hash(&[(1, &p1), (2, &p2), (3, &p3)]);
+
+        let mut f = fsm(Direction::Pull, Arc::clone(&storage));
+        let out = drive(
+            &mut f,
+            vec![
+                hello(),
+                SyncMessage::PageHashBatch {
+                    start_page: 1,
+                    end_page: 3,
+                    combined_hash: ch,
+                },
+                SyncMessage::Complete,
+            ],
+        );
+
+        // HelloReply + SyncComplete only — no PageData since everything matched.
+        assert_eq!(out.len(), 2);
+        assert!(matches!(out[0], SyncMessage::HelloReply { .. }));
+        match &out[1] {
+            SyncMessage::SyncComplete {
+                pages_transferred: 0,
+                bytes_transferred: 0,
+            } => {}
+            other => panic!("expected SyncComplete(0, 0), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pull_batch_mismatch_triggers_individual_rehash() {
+        // Server has pages 1..=3. Client sends a batch with a different
+        // combined hash. Server should respond with HashMismatchBatch so
+        // the client can re-send individual PageHash messages.
+        let storage = Arc::new(InMemorySyncStorage::new());
+        let p1 = vec![1u8; 4096];
+        let p2 = vec![2u8; 4096];
+        let p3 = vec![3u8; 4096];
+        storage.put_page(1, &p1, &page_hash(&p1), 0).unwrap();
+        storage.put_page(2, &p2, &page_hash(&p2), 0).unwrap();
+        storage.put_page(3, &p3, &page_hash(&p3), 0).unwrap();
+
+        let wrong_hash = Bytes::from_static(&[0xFF; 32]);
+
+        let mut f = fsm(Direction::Pull, Arc::clone(&storage));
+        let mut out = Vec::new();
+        // Send Hello + batch with wrong hash.
+        for msg in [
+            hello(),
+            SyncMessage::PageHashBatch {
+                start_page: 1,
+                end_page: 3,
+                combined_hash: wrong_hash,
+            },
+        ] {
+            f.apply(&msg, &mut |m| {
+                out.push(m);
+                Ok(())
+            })
+            .unwrap();
+        }
+
+        assert!(matches!(out[0], SyncMessage::HelloReply { .. }));
+        match &out[1] {
+            SyncMessage::HashMismatchBatch { page_numbers } => {
+                assert_eq!(page_numbers, &[1, 2, 3]);
+            }
+            other => panic!("expected HashMismatchBatch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pull_batch_match_partial_with_extra_server_pages() {
+        // Server has pages 1..=5. Client sends a matching batch for
+        // 1..=3. Pages 4 and 5 should still be sent on Complete.
+        let storage = Arc::new(InMemorySyncStorage::new());
+        let mut page_data = Vec::new();
+        for p in 1u32..=5 {
+            let data = vec![p as u8; 4096];
+            storage.put_page(p, &data, &page_hash(&data), 0).unwrap();
+            page_data.push((p, data));
+        }
+
+        let ch = combined_hash(&[
+            (1, &page_data[0].1),
+            (2, &page_data[1].1),
+            (3, &page_data[2].1),
+        ]);
+
+        let mut f = fsm(Direction::Pull, Arc::clone(&storage));
+        let out = drive(
+            &mut f,
+            vec![
+                hello(),
+                SyncMessage::PageHashBatch {
+                    start_page: 1,
+                    end_page: 3,
+                    combined_hash: ch,
+                },
+                SyncMessage::Complete,
+            ],
+        );
+
+        let sent_pages: Vec<u32> = out
+            .iter()
+            .filter_map(|m| match m {
+                SyncMessage::PageData { page_no, .. } => Some(*page_no),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(sent_pages, vec![4, 5]);
+        match out.last().unwrap() {
+            SyncMessage::SyncComplete {
+                pages_transferred: 2,
+                ..
+            } => {}
+            other => panic!("expected SyncComplete with 2 pages, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn push_batch_mismatch_triggers_individual_rehash() {
+        // Push direction: batch mismatch should also emit
+        // HashMismatchBatch so the client can send individual hashes.
+        let storage = Arc::new(InMemorySyncStorage::new());
+        let mut f = fsm(Direction::Push, Arc::clone(&storage));
+        let mut out = Vec::new();
+        for msg in [
+            hello(),
+            SyncMessage::PageHashBatch {
+                start_page: 1,
+                end_page: 2,
+                combined_hash: Bytes::from_static(&[0xAA; 32]),
+            },
+        ] {
+            f.apply(&msg, &mut |m| {
+                out.push(m);
+                Ok(())
+            })
+            .unwrap();
+        }
+
+        assert!(matches!(out[0], SyncMessage::HelloReply { .. }));
+        match &out[1] {
+            SyncMessage::HashMismatchBatch { page_numbers } => {
+                assert_eq!(page_numbers, &[1, 2]);
+            }
+            other => panic!("expected HashMismatchBatch, got {other:?}"),
+        }
     }
 }
