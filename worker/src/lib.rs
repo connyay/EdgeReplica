@@ -95,7 +95,7 @@ async fn build_state(env: &Env) -> worker::Result<SharedState<repo_d1::D1Repo>> 
         SCHEMA_READY.store(true, Ordering::Relaxed);
     }
 
-    let keyring = Arc::new(load_keyring(env));
+    let keyring = Arc::new(load_keyring(env).map_err(|e| worker::Error::RustError(e))?);
     let clock: SharedClock = Arc::new(crate::clock::WorkerDateClock::new());
     let config = load_config(env);
 
@@ -130,26 +130,17 @@ fn auto_migrate(env: &Env) -> bool {
 }
 
 #[cfg(target_arch = "wasm32")]
-pub(crate) fn load_keyring(env: &Env) -> Keyring {
+pub(crate) fn load_keyring(env: &Env) -> Result<Keyring, String> {
     let raw = env
         .var("SESSION_KEY")
         .ok()
         .map(|v| v.to_string())
         .unwrap_or_default();
     if raw.trim().is_empty() {
-        // Don't fail the worker boot — wrangler dev should run without any
-        // env setup. Production should ALWAYS set SESSION_KEY; the dev key
-        // is deterministic and fully recoverable from a leaked binary.
         worker::console_error!("SESSION_KEY unset; using deterministic dev key");
-        return Keyring::dev_default();
+        return Ok(Keyring::dev_default());
     }
-    match Keyring::from_base64(&raw) {
-        Ok(k) => k,
-        Err(e) => {
-            worker::console_error!("invalid SESSION_KEY ({e}); using dev fallback");
-            Keyring::dev_default()
-        }
-    }
+    Keyring::from_base64(&raw).map_err(|e| format!("invalid SESSION_KEY: {e}"))
 }
 
 #[cfg(target_arch = "wasm32")]

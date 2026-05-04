@@ -43,7 +43,7 @@ pub struct EdgeReplica {
 impl DurableObject for EdgeReplica {
     fn new(state: State, env: Env) -> Self {
         let sql = state.storage().sql();
-        let keyring = Arc::new(load_keyring(&env));
+        let keyring = Arc::new(load_keyring(&env).expect("SESSION_KEY must be valid or unset"));
         let clock: SharedClock = Arc::new(WorkerDateClock::new());
         Self {
             sql,
