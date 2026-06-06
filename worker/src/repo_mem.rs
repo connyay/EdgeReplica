@@ -369,7 +369,7 @@ impl Repo for InMemoryRepo {
             .filter(|d| d.org_id == *org_id)
             .cloned()
             .collect();
-        out.sort_by(|a, b| a.created_at_ms.cmp(&b.created_at_ms));
+        out.sort_by_key(|a| a.created_at_ms);
         Ok(out)
     }
 

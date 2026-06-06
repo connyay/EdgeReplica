@@ -1,0 +1,34 @@
+syntax = "proto3";
+
+package edgereplica.auth.v1;
+
+// Immutable, signed claims for an issued macaroon.
+//
+// These are serialized (buffa/protobuf) and placed in the macaroon
+// *identifier*, which is folded into the root signature
+// (sig0 = HMAC(root_key, identifier)). Unlike first-party caveats — which
+// ANY holder of a token can append without the root key — the identifier
+// cannot be altered without invalidating the signature. Every
+// authority-bearing fact therefore lives here, never in a caveat.
+//
+// Expiry is the sole exception and lives in an `exp=<unix>` first-party
+// caveat, because it is a genuinely-attenuating constraint: a holder may
+// append a *tighter* (earlier) expiry, and the effective expiry is the
+// earliest one. Verification rejects any caveat other than `exp`.
+message TokenClaims {
+  // Discriminates the two token kinds: "session" | "sync". Checked on every
+  // verify path so a session token can't drive a sync RPC and vice versa.
+  string purpose = 1;
+
+  // --- shared subject ---
+  string user_id = 10;
+  string org_id = 11;
+
+  // --- session ---
+  string email = 12;
+  string role = 13;  // "admin" | "member"
+
+  // --- sync ---
+  string database_id = 14;
+  string direction = 15;  // "push" | "pull"
+}

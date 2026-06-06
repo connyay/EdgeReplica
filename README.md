@@ -31,9 +31,11 @@ bench/      hash-algorithm benchmarks (host + wasm)
   admin stack. Auth layers are decoders, not gates — handlers call
   `require_session(ctx)?` themselves. Sync auth is verified twice (at
   the worker edge and again inside the DO) as defense in depth.
-- **Macaroons** carry `purpose`, `user`, `org`, `exp`, plus
-  session-specific (`email`, `role`) or sync-specific (`database`,
-  `direction`) caveats. Verification is pure (no DB read).
+- **Macaroons** pack their authority claims (`purpose`, `user`, `org`,
+  plus session-specific `email`/`role` or sync-specific
+  `database`/`direction`) into the signed token identifier, so a holder
+  can't tamper with them. `exp` is the lone first-party caveat (it can
+  only attenuate). Verification is pure (no DB read).
 - **Storage** is split: D1 holds users/orgs/databases (worker side),
   `SqlStorage` holds pages (DO side). The FSM uses a `SyncStorage`
   trait so it's host-testable against an in-memory fake.

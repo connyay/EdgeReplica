@@ -1,8 +1,8 @@
 //! Worker-side WebSocket upgrade forwarder for sync.
 //!
 //! The worker is a thin auth/routing edge for sync: it verifies the
-//! sync macaroon, derives the DurableObject name from the `database`
-//! caveat, and forwards the upgrade request through `stub.fetch`. The
+//! sync macaroon, derives the DurableObject name from the signed
+//! `database` claim, and forwards the upgrade request through `stub.fetch`. The
 //! DO terminates the WebSocket and runs the FSM (see
 //! [`crate::do_sync_ws`]). A missing or invalid token short-circuits
 //! with 401 here so the upgrade never reaches the DO; the DO
@@ -17,8 +17,8 @@ use worker::{Body, Env, HttpRequest, Result, request_to_wasm, response_from_wasm
 
 use crate::middleware::extract_bearer;
 
-/// Single fixed path the sync WebSocket lives at. The macaroon's
-/// `database` caveat picks the DO; the URL path doesn't carry routing
+/// Single fixed path the sync WebSocket lives at. The macaroon's signed
+/// `database` claim picks the DO; the URL path doesn't carry routing
 /// information beyond identifying this as a sync call.
 pub const SYNC_PATH: &str = "/sync";
 

@@ -40,7 +40,7 @@ impl FromStr for Role {
     }
 }
 
-/// Sync direction. Encoded into the sync macaroon as a `direction=` caveat
+/// Sync direction. Carried in the signed sync-token claims as `push` | `pull`
 /// so a push token can't accidentally drive a pull and vice versa.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -117,7 +117,7 @@ impl FromStr for IdentityProvider {
     }
 }
 
-/// `purpose=` caveat values the workspace mints. Verification rejects a
+/// `purpose` claim values the workspace mints. Verification rejects a
 /// token whose purpose doesn't match the expected one.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum TokenPurpose {

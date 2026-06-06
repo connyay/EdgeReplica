@@ -3,6 +3,9 @@
 //! - [`admin`] — ConnectRPC service `edgereplica.admin.v1.AdminService`,
 //!   generated from `proto/edgereplica/admin/v1/admin.proto` via
 //!   `connectrpc-build` in `build.rs`.
+//! - [`auth`] — message-only `edgereplica.auth.v1` package. Carries
+//!   `TokenClaims`, the signed-identifier payload for session/sync macaroons
+//!   (see `worker/src/auth/tokens.rs`).
 //! - [`sync`] — hand-written WebSocket+MessagePack frame protocol used by
 //!   the DurableObject's sync handler and the CLI's `push`/`pull` commands.
 
@@ -17,6 +20,6 @@ mod generated {
     include!(concat!(env!("OUT_DIR"), "/_connectrpc.rs"));
 }
 
-pub use generated::edgereplica::admin;
+pub use generated::edgereplica::{admin, auth};
 
 pub mod sync;

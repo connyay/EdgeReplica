@@ -1,9 +1,10 @@
 //! Macaroon root-key handling.
 //!
-//! A single 32-byte root key signs every token. Verification relies on the
-//! `purpose=` caveat (and the verifier's exact-match satisfier) to keep
-//! token kinds from being interchangeable: a session token can't be used
-//! to drive a sync RPC, etc.
+//! A single 32-byte root key signs every token. Token kinds are kept from
+//! being interchangeable by the `purpose` field inside the signed
+//! [`crate::auth::tokens`] claims (folded into the macaroon identifier, hence
+//! tamper-proof): each `verify_*` path checks `purpose` matches, so a session
+//! token can't be used to drive a sync RPC, etc.
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as B64;

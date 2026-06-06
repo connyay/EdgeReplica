@@ -23,9 +23,9 @@ pub fn map_token_error(e: TokenError) -> ConnectError {
         TokenError::Malformed(s) => ConnectError::unauthenticated(format!("malformed token: {s}")),
         TokenError::Expired => ConnectError::unauthenticated("token expired"),
         TokenError::WrongPurpose { .. } => ConnectError::permission_denied(e.to_string()),
-        TokenError::MissingCaveat(_) | TokenError::InvalidCaveat(_) => {
-            ConnectError::unauthenticated(e.to_string())
-        }
+        TokenError::MissingClaim(_)
+        | TokenError::InvalidClaim(_)
+        | TokenError::UnexpectedCaveat(_) => ConnectError::unauthenticated(e.to_string()),
     }
 }
 
